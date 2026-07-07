@@ -1,0 +1,50 @@
+# ===== 依赖 =====
+node_modules/
+
+# ===== 构建产物 =====
+dist/
+dist-ssr/
+
+# ===== Rust 编译缓存 =====
+target/
+*.pdb
+
+# ===== 本地数据（含 API Key、对话记录等敏感信息） =====
+store.json
+*.store
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# ===== IDE 和编辑器 =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 日志 =====
+*.log
+logs/
+
+# ===== 临时文件 =====
+*.tmp
+*.temp
+tmp/
+temp/
+route.md
+
+# ===== CodeBuddy 项目数据（非代码） =====
+.codebuddy/
