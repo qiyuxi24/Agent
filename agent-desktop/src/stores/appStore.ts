@@ -18,6 +18,33 @@ export interface Message {
 
 export type ThemeMode = "system" | "light" | "dark";
 
+/** 快捷键动作类型 */
+export type ShortcutAction = "newConversation" | "focusInput" | "toggleModelPicker" | "openSettings";
+
+/** 单个快捷键绑定（按键组合，如 ["ctrl", "n"]） */
+export interface ShortcutBinding {
+  keys: string[];
+}
+
+/** 所有快捷键的映射 */
+export type ShortcutMap = Record<ShortcutAction, ShortcutBinding>;
+
+/** 默认快捷键绑定 */
+export const DEFAULT_SHORTCUTS: ShortcutMap = {
+  newConversation:   { keys: ["ctrl", "n"] },
+  focusInput:        { keys: ["ctrl", "l"] },
+  toggleModelPicker: { keys: ["ctrl", "k"] },
+  openSettings:      { keys: ["ctrl", ","] },
+};
+
+/** 快捷键动作的中文标签 */
+export const SHORTCUT_LABELS: Record<ShortcutAction, string> = {
+  newConversation:   "新建对话",
+  focusInput:        "聚焦输入框",
+  toggleModelPicker: "切换模型",
+  openSettings:      "打开设置",
+};
+
 /** 一个模型提供商（如 OpenAI、DeepSeek、通义千问） */
 export interface ModelProvider {
   id: string;          // 唯一 ID
@@ -39,6 +66,7 @@ interface AppState {
   // 设置
   theme: ThemeMode;
   language: string;
+  shortcuts: ShortcutMap;
 
   // 模型提供商（支持多个）
   providers: ModelProvider[];
@@ -58,6 +86,7 @@ interface AppState {
   // 动作 - 设置
   setTheme: (theme: ThemeMode) => void;
   setLanguage: (lang: string) => void;
+  setShortcut: (action: ShortcutAction, keys: string[]) => void;
 
   // 动作 - 模型管理
   addProvider: (name: string, apiBase: string, apiKey: string, models: string[]) => void;
@@ -124,6 +153,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   theme: "system",
   language: "zh-CN",
+  shortcuts: { ...DEFAULT_SHORTCUTS },
 
   providers: [],
   activeProviderId: null,
@@ -228,6 +258,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     setTimeout(() => get().saveToStore(), 100);
   },
 
+  setShortcut: (action, keys) => {
+    set((s) => ({
+      shortcuts: { ...s.shortcuts, [action]: { keys } },
+    }));
+    setTimeout(() => get().saveToStore(), 100);
+  },
+
   // ---- 模型管理 ----
 
   addProvider: (name, apiBase, apiKey, models) => {
@@ -318,6 +355,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const messages = (await s.get<Record<string, Message[]>>("messages")) || {};
       const theme = (await s.get<ThemeMode>("theme")) || "system";
       const language = (await s.get<string>("language")) || "zh-CN";
+      const shortcuts = (await s.get<ShortcutMap>("shortcuts")) || DEFAULT_SHORTCUTS;
       const providers = (await s.get<ModelProvider[]>("providers")) || [];
       const activeProviderId = (await s.get<string | null>("activeProviderId")) || providers[0]?.id || null;
 
@@ -347,6 +385,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         messages,
         theme,
         language,
+        shortcuts,
         providers,
         activeProviderId,
         ready: true,
@@ -367,6 +406,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       await s.set("messages", state.messages);
       await s.set("theme", state.theme);
       await s.set("language", state.language);
+      await s.set("shortcuts", state.shortcuts);
       await s.set("providers", state.providers);
       await s.set("activeProviderId", state.activeProviderId);
       // 清理旧字段

@@ -1,14 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Sidebar from "./components/Sidebar";
-import ChatView from "./pages/ChatView";
+import ChatView, { type ChatViewHandle } from "./pages/ChatView";
 import SettingsPage from "./pages/SettingsPage";
 import { useAppStore } from "./stores/appStore";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 
 type Page = "chat" | "settings";
 
 function App() {
   const [page, setPage] = useState<Page>("chat");
-  const { activeConversationId, ready, loadFromStore } = useAppStore();
+  const { activeConversationId, ready, loadFromStore, createConversation } = useAppStore();
+  const chatViewRef = useRef<ChatViewHandle>(null);
 
   useEffect(() => {
     loadFromStore();
@@ -29,6 +31,14 @@ function App() {
     return () => mq.removeEventListener("change", handleChange);
   }, []);
 
+  // 全局快捷键
+  useKeyboardShortcuts({
+    onNewConversation: () => createConversation(),
+    onFocusInput: () => chatViewRef.current?.focusInput(),
+    onToggleModelPicker: () => chatViewRef.current?.toggleModelPicker(),
+    onOpenSettings: () => setPage("settings"),
+  });
+
   if (!ready) {
     return (
       <div className="app-loading">
@@ -41,9 +51,13 @@ function App() {
     <div className="app-container">
       <Sidebar currentPage={page} onNavigate={setPage} />
       <main className="main-content">
-        {page === "chat" && <ChatView conversationId={activeConversationId} />}
-        {page === "settings" && <SettingsPage />}
+        <ChatView ref={chatViewRef} conversationId={activeConversationId} />
       </main>
+
+      {/* 设置页作为独立浮层覆盖在主页面之上 */}
+      {page === "settings" && (
+        <SettingsPage onClose={() => setPage("chat")} />
+      )}
     </div>
   );
 }

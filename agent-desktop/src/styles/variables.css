@@ -1,0 +1,59 @@
+/* ===== CSS Variables ===== */
+:root,
+.theme-light {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f7f7f8;
+  --bg-sidebar: #f0f0f0;
+  --bg-bubble-user: #e8f0fe;
+  --bg-bubble-assistant: #ffffff;
+  --text-primary: #1a1a2e;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --border-color: #e5e7eb;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-light: rgba(99, 102, 241, 0.12);
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+.theme-dark {
+  --bg-primary: #1e1e2e;
+  --bg-secondary: #181825;
+  --bg-sidebar: #11111b;
+  --bg-bubble-user: #2d2d5e;
+  --bg-bubble-assistant: #2a2a3e;
+  --text-primary: #e4e4e7;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --border-color: #3f3f5c;
+  --accent: #818cf8;
+  --accent-hover: #6366f1;
+  --accent-light: rgba(129, 140, 248, 0.15);
+  --danger: #f87171;
+  --danger-hover: #ef4444;
+}
+
+/* system 模式跟随 media query */
+@media (prefers-color-scheme: dark) {
+  :root:not(.theme-light):not(.theme-dark) {
+    --bg-primary: #1e1e2e;
+    --bg-secondary: #181825;
+    --bg-sidebar: #11111b;
+    --bg-bubble-user: #2d2d5e;
+    --bg-bubble-assistant: #2a2a3e;
+    --text-primary: #e4e4e7;
+    --text-secondary: #a1a1aa;
+    --text-muted: #71717a;
+    --border-color: #3f3f5c;
+    --accent: #818cf8;
+    --accent-hover: #6366f1;
+    --accent-light: rgba(129, 140, 248, 0.15);
+    --danger: #f87171;
+    --danger-hover: #ef4444;
+  }
+}

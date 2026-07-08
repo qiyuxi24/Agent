@@ -1,0 +1,185 @@
+/* ===== Provider 管理（设置页 AI 模型） ===== */
+.btn-add-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.btn-add-provider:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.provider-form {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.provider-form .form-group {
+  margin-bottom: 12px;
+}
+
+.btn-cancel {
+  padding: 10px 24px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.btn-cancel:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.provider-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+}
+.provider-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.provider-info h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+.provider-base {
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+.provider-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.provider-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.provider-edit-form .form-group {
+  margin-bottom: 0;
+}
+
+.btn-icon-sm {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.btn-icon-sm:hover {
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--text-primary);
+}
+.btn-icon-sm.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+}
+
+/* Provider 模型标签 */
+.provider-models {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.models-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.model-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.model-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  background: var(--accent-light);
+  color: var(--accent);
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.model-tag-remove {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.model-tag-remove:hover { opacity: 1; }
+
+.model-add-inline {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.model-add-input {
+  width: 100px;
+  padding: 2px 6px;
+  border: 1px dashed var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.model-add-input:focus {
+  border-color: var(--accent);
+  border-style: solid;
+}
+.model-add-input::placeholder {
+  color: var(--text-muted);
+  font-size: 11px;
+}

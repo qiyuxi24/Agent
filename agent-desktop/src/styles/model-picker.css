@@ -1,0 +1,103 @@
+/* ===== 模型选择器（对话页顶部） ===== */
+.chat-toolbar {
+  padding: 8px 16px 0;
+  display: flex;
+  align-items: center;
+}
+.model-picker {
+  position: relative;
+}
+.model-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.model-picker-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.model-picker-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.model-label {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+  padding: 4px;
+}
+.model-dropdown-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.model-provider-group {
+  padding: 4px 0;
+}
+.model-provider-group + .model-provider-group {
+  border-top: 1px solid var(--border-color);
+  margin-top: 4px;
+  padding-top: 8px;
+}
+.model-provider-name {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 4px 8px 6px;
+}
+
+.model-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: inherit;
+  text-align: left;
+  transition: background 0.1s;
+}
+.model-option:hover { background: rgba(128, 128, 128, 0.08); }
+.model-option.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.model-option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

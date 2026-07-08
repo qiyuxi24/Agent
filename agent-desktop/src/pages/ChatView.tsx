@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 import { useAppStore } from "../stores/appStore";
 import type { Message } from "../stores/appStore";
+import MarkdownRenderer from "../components/MarkdownRenderer";
 
 // 运行时检测是否在 Tauri 环境中
 function isTauriEnv(): boolean {
@@ -11,11 +12,17 @@ interface ChatViewProps {
   conversationId: string | null;
 }
 
+/** 暴露给父组件调用的方法 */
+export interface ChatViewHandle {
+  focusInput: () => void;
+  toggleModelPicker: () => void;
+}
+
 interface SSEDelta {
   choices?: Array<{ delta?: { content?: string } }>;
 }
 
-export default function ChatView({ conversationId }: ChatViewProps) {
+const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ conversationId }, ref) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -23,6 +30,16 @@ export default function ChatView({ conversationId }: ChatViewProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+
+  // 暴露方法给父组件（快捷键用）
+  useImperativeHandle(ref, () => ({
+    focusInput: () => {
+      textareaRef.current?.focus();
+    },
+    toggleModelPicker: () => {
+      setShowModelPicker((prev) => !prev);
+    },
+  }));
 
   const {
     messages,
@@ -311,8 +328,16 @@ export default function ChatView({ conversationId }: ChatViewProps) {
                 {msg.role === "user" ? "👤" : "🤖"}
               </div>
               <div className="message-content">
-                <div className="message-bubble">
-                  {msg.content || (isLoading && msg.role === "assistant" ? "思考中..." : "")}
+                <div className={`message-bubble ${msg.role === "assistant" ? "message-bubble-markdown" : ""}`}>
+                  {msg.role === "assistant" ? (
+                    msg.content ? (
+                      <MarkdownRenderer content={msg.content} />
+                    ) : isLoading ? (
+                      <span className="thinking-text">思考中...</span>
+                    ) : null
+                  ) : (
+                    msg.content
+                  )}
                 </div>
               </div>
             </div>
@@ -348,4 +373,6 @@ export default function ChatView({ conversationId }: ChatViewProps) {
       </div>
     </div>
   );
-}
+});
+
+export default ChatView;
