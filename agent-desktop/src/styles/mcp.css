@@ -195,3 +195,26 @@
   color: var(--text-secondary, #aaa);
   word-break: break-word;
 }
+
+/* 工具步骤错误状态 */
+.tool-step.error .tool-step-name {
+  color: #ff6b6b;
+}
+
+.tool-step-error {
+  font-size: 11px;
+  color: #ff6b6b;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.tool-step-result-error {
+  color: #ff9999;
+  font-size: 11px;
+  line-height: 1.4;
+  max-height: 4.2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre-wrap;
+}

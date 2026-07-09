@@ -29,6 +29,19 @@
 - 流式增量解析 OpenAI 分片 `tool_calls`（按 index 合并 name/arguments）
 - 取消生成信号与工具循环解耦，保持单次 stream-done 发射
 
+### 修复（健壮性）
+
+- **MCP 错误码体系**：新增 `error_codes.rs`（Rust）+ `mcpErrors.ts`（前端），覆盖 MCP-001 到 MCP-014 共 14 类错误
+  - MCP-001 超时 / MCP-002 进程退出 / MCP-003 工具执行错误 / MCP-004 连接关闭 / MCP-005 服务器未连接 / MCP-006 工具名格式 / MCP-007 参数解析 / MCP-008 IO 错误 / MCP-009 JSON 解析 / MCP-010 进程启动 / MCP-011 初始化失败 / MCP-012 LLM 网络 / MCP-013 LLM API / MCP-014 流式中断
+  - 每类错误携带 `is_retryable` / `needs_reconnect` 策略标记
+  - 前端 `ToolResultEvent` 新增 `is_error` / `error_code` / `error_category` / `suggested_action` 字段
+- **工具调用超时保护**：`request()` 30s 超时 / 握手 15s 超时 / 单行读取 10s 超时，防止 MCP 子进程卡死导致对话永久阻塞
+- **进程健康检测**：`McpClient::is_alive()` 在每次工具调用前后检测进程存活，崩溃时自动标记+移除
+- **stderr 捕获**：MCP 子进程 stderr 改为 piped（原为 inherit），便于诊断
+- **静默吞错修复**：工具反序列化失败 / JSON 行解析失败 均输出 eprintln 日志
+- **参数类型安全**：`McpError` 替代原始 `String`，类型安全的错误传播
+- **对话降级保护**：进程退出类错误（MCP-002/004）自动中止后续工具调用，返回已生成文本
+
 ---
 
 ## [0.0.1] - 2026-07-08

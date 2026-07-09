@@ -1,5 +1,7 @@
+mod error_codes;
 mod mcp;
 
+use error_codes::McpError;
 use futures::StreamExt;
 use mcp::{McpManager, McpServerConfig};
 use serde::{Deserialize, Serialize};
@@ -8,6 +10,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
 use std::collections::HashMap;
 use std::fs;
+use std::time::Instant;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatRequest {
@@ -62,6 +65,15 @@ pub struct ToolCallEvent {
 pub struct ToolResultEvent {
     pub name: String,
     pub result: String,
+    /// 是否执行成功
+    #[serde(rename = "isError")]
+    pub is_error: bool,
+    /// 错误码（成功时为 None）
+    pub error_code: Option<String>,
+    /// 错误分类（如 TIMEOUT、TOOL_ERROR）
+    pub error_category: Option<String>,
+    /// 建议操作：retry | reconnect | none
+    pub suggested_action: Option<String>,
 }
 
 /// 把内部 ChatMessage 转为 OpenAI 接口需要的 JSON（精确控制字段，避免 null 陷阱）
@@ -146,7 +158,7 @@ async fn chat_stream(
             return Ok(());
         }
 
-        // 执行每个工具调用
+        // 执行每个工具调用（带超时和错误码）
         for tc in &tool_calls {
             let _ = app.emit(
                 "tool-call",
@@ -156,10 +168,34 @@ async fn chat_stream(
                 },
             );
 
+            let start = Instant::now();
             let res = state.mcp.call_namespaced(&tc.name, &tc.arguments).await;
-            let result_text = match res {
-                Ok(t) => t,
-                Err(e) => format!("工具调用失败: {}", e),
+            let elapsed = start.elapsed();
+
+            let (result_text, is_error, error_code, error_category, suggested_action) = match &res {
+                Ok(t) => (t.clone(), false, None, None, None),
+                Err(e) => {
+                    let action = if e.is_retryable() {
+                        "retry"
+                    } else if e.needs_reconnect() {
+                        "reconnect"
+                    } else {
+                        "none"
+                    };
+                    // 包含耗时信息帮助前端诊断
+                    let msg = format!(
+                        "{} (耗时 {:.1}s)",
+                        e.message,
+                        elapsed.as_secs_f64()
+                    );
+                    (
+                        msg,
+                        true,
+                        Some(e.code.to_string()),
+                        Some(e.category.to_string()),
+                        Some(action.to_string()),
+                    )
+                }
             };
 
             let _ = app.emit(
@@ -167,6 +203,10 @@ async fn chat_stream(
                 ToolResultEvent {
                     name: tc.name.clone(),
                     result: result_text.clone(),
+                    is_error,
+                    error_code: error_code.clone(),
+                    error_category: error_category.clone(),
+                    suggested_action: suggested_action.clone(),
                 },
             );
 
@@ -176,6 +216,14 @@ async fn chat_stream(
                 tool_calls: None,
                 tool_call_id: Some(tc.id.clone()),
             });
+
+            // 如果工具调用导致进程退出（MCP-002），通知前端
+            if let Some(ref code) = error_code {
+                if code == "MCP-002" || code == "MCP-004" {
+                    eprintln!("[chat_stream] MCP 服务器断开，中止后续工具调用");
+                    break;
+                }
+            }
         }
     }
 
@@ -214,13 +262,13 @@ async fn run_completion(
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("网络请求失败: {}", e))?;
+        .map_err(|e| McpError::llm_network(&e.to_string()).to_string())?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         let short: String = body.chars().take(300).collect();
-        return Err(format!("LLM API 错误 ({}): {}", status, short));
+        return Err(McpError::llm_api_error(status.as_u16(), &short).to_string());
     }
 
     let mut stream = response.bytes_stream();
@@ -294,7 +342,7 @@ async fn run_completion(
                 let _ = app.emit(
                     "stream-error",
                     StreamError {
-                        error: format!("流式读取错误: {}", e),
+                        error: McpError::llm_stream_err(&e.to_string()).to_string(),
                     },
                 );
                 break;
@@ -340,7 +388,7 @@ async fn mcp_connect(
     state: tauri::State<'_, AppState>,
     config: McpServerConfig,
 ) -> Result<usize, String> {
-    state.mcp.connect(config).await
+    state.mcp.connect(config).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -380,7 +428,11 @@ async fn mcp_call_tool(
     args: String,
 ) -> Result<String, String> {
     let namespaced = format!("{}::{}", server, tool);
-    state.mcp.call_namespaced(&namespaced, &args).await
+    state
+        .mcp
+        .call_namespaced(&namespaced, &args)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub struct AppState {

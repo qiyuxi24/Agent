@@ -5,6 +5,7 @@ import type { Message } from "../stores/appStore";
 import MarkdownRenderer from "../components/MarkdownRenderer";
 import ErrorBoundary from "../components/ErrorBoundary";
 import { getErrorMessage, isAbortError } from "../lib/errors";
+import { getMcpErrorInfo } from "../lib/mcpErrors";
 import { parseSSEStream } from "../lib/sse";
 import { SendIcon, StopIcon, ModelIcon, ChevronDownIcon, CheckIcon, ArrowDownIcon, EmptyChatIcon } from "../components/Icons";
 
@@ -39,21 +40,43 @@ function SafeMarkdown({ content }: { content: string }) {
 function ToolSteps({
   steps,
 }: {
-  steps: { name: string; args: string; status: "running" | "done"; result?: string }[];
+  steps: {
+    name: string;
+    args: string;
+    status: "running" | "done" | "error";
+    result?: string;
+    errorCode?: string | null;
+    errorCategory?: string | null;
+  }[];
 }) {
   return (
     <div className="tool-steps">
-      {steps.map((s, i) => (
-        <div key={i} className={`tool-step ${s.status}`}>
-          <span className="tool-step-icon">
-            {s.status === "running" ? "⏳" : "✅"}
-          </span>
-          <span className="tool-step-name">{s.name}</span>
-          {s.result && (
-            <span className="tool-step-result">{s.result.slice(0, 240)}</span>
-          )}
-        </div>
-      ))}
+      {steps.map((s, i) => {
+        const isError = s.status === "error";
+        const errorInfo = isError ? getMcpErrorInfo(s.errorCode) : null;
+        // 运行中 or 成功 or 失败
+        return (
+          <div key={i} className={`tool-step ${s.status}`}>
+            <span className="tool-step-icon">
+              {s.status === "running" ? "⏳" : isError ? (errorInfo?.icon || "❌") : "✅"}
+            </span>
+            <span className="tool-step-name">{s.name}</span>
+            {isError && errorInfo && (
+              <span className="tool-step-error" title={errorInfo.action}>
+                [{errorInfo.code}] {errorInfo.message}
+              </span>
+            )}
+            {s.result && !isError && (
+              <span className="tool-step-result">{s.result.slice(0, 240)}</span>
+            )}
+            {isError && s.result && (
+              <span className="tool-step-result tool-step-result-error">
+                {s.result.slice(0, 240)}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -76,8 +99,10 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
   const [toolSteps, setToolSteps] = useState<{
     name: string;
     args: string;
-    status: "running" | "done";
+    status: "running" | "done" | "error";
     result?: string;
+    errorCode?: string | null;
+    errorCategory?: string | null;
   }[]>([]);
 
   // 暴露方法给父组件（快捷键用）
@@ -186,19 +211,29 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
       },
     );
 
-    const unlistenTr = await listen<{ name: string; result: string }>(
-      "tool-result",
-      (event) => {
-        if (cancelledRef.current) return;
-        setToolSteps((prev) =>
-          prev.map((s) =>
-            s.name === event.payload.name && s.status === "running"
-              ? { ...s, status: "done", result: event.payload.result }
-              : s,
-          ),
-        );
-      },
-    );
+    const unlistenTr = await listen<{
+      name: string;
+      result: string;
+      isError: boolean;
+      error_code?: string | null;
+      error_category?: string | null;
+    }>("tool-result", (event) => {
+      if (cancelledRef.current) return;
+      const { name, result, isError, error_code, error_category } = event.payload;
+      setToolSteps((prev) =>
+        prev.map((s) =>
+          s.name === name && s.status === "running"
+            ? {
+                ...s,
+                status: isError ? "error" : "done",
+                result,
+                errorCode: error_code || null,
+                errorCategory: error_category || null,
+              }
+            : s,
+        ),
+      );
+    });
 
     const unlisten1 = await listen<{ token: string }>("stream-token", (event) => {
       if (cancelledRef.current) return;
