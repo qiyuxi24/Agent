@@ -55,7 +55,7 @@
       "models": "AI Models",
       "shortcuts": "Shortcuts",
       "tools": "Tools / MCP",
-      "plugins": "Plugins",
+      "skills": "Skills",
       "about": "About"
     },
 
@@ -100,8 +100,36 @@
       }
     },
 
-    "plugins": {
-      "comingSoon": "Plugin system coming soon."
+    "skills": {
+      "title": "Skills Marketplace",
+      "desc": "Skills are specialized capability packs for the AI assistant. Once installed, the AI will automatically load relevant skills to enhance performance in specific domains.",
+      "installed": "Installed",
+      "market": "Marketplace",
+      "search": "Search skills...",
+      "all": "All",
+      "install": "Install",
+      "installing": "Installing...",
+      "uninstall": "Uninstall",
+      "enable": "Enable",
+      "disable": "Disable",
+      "preview": "Preview",
+      "version": "Version",
+      "category": "Category",
+      "size": "Size",
+      "noInstalled": "No skills installed yet. Go to the Marketplace to discover more.",
+      "noMarket": "No skills available. Check your network connection.",
+      "categories": {
+        "frontend": "Frontend",
+        "backend": "Backend",
+        "ai": "AI",
+        "mcp": "MCP",
+        "research": "Research",
+        "tools": "Tools",
+        "general": "General"
+      },
+      "installSuccess": "Installed successfully",
+      "installFailed": "Installation failed",
+      "deleteConfirm": "Are you sure you want to uninstall \"{{name}}\"?"
     },
 
     "tools": {

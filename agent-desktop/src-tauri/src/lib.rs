@@ -1,6 +1,7 @@
 mod browser;
 mod error_codes;
 mod mcp;
+mod skills;
 
 use error_codes::McpError;
 use futures::StreamExt;
@@ -521,6 +522,13 @@ pub fn run() {
             browser::browser_stop,
             browser::browser_resize,
             browser::browser_destroy,
+            // Skills 管理
+            skills::skills_list,
+            skills::skills_toggle,
+            skills::skills_market_list,
+            skills::skills_install,
+            skills::skills_delete,
+            skills::skills_read_content,
         ])
         .setup(|app| {
             // 首次启动：自动创建应用数据目录

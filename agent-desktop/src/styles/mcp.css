@@ -58,6 +58,9 @@
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .mcp-status.on {
@@ -68,6 +71,36 @@
 .mcp-status.off {
   background: rgba(150, 150, 150, .15);
   color: #999;
+}
+
+/* 连接状态脉冲点 */
+.mcp-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ad88a;
+  animation: mcpDotPulse 2s ease-in-out infinite;
+}
+
+@keyframes mcpDotPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .5; transform: scale(.8); }
+}
+
+/* 工具计数 */
+.mcp-tool-count {
+  font-size: 10px;
+  background: rgba(80, 200, 120, .2);
+  padding: 1px 6px;
+  border-radius: 6px;
+  margin-left: 2px;
+}
+
+/* MCP 头部操作栏 */
+.mcp-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .mcp-server-cmd {
@@ -217,4 +250,109 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: pre-wrap;
+}
+
+/* --- MCP 市场推荐 --- */
+.mcp-market-section {
+  margin-bottom: 20px;
+  padding: 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+}
+
+.mcp-market-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  color: var(--text-primary);
+}
+
+.mcp-market-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-market-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  transition: border-color .15s;
+}
+
+.mcp-market-card:hover {
+  border-color: var(--accent);
+}
+
+.mcp-market-card.connected {
+  border-left: 3px solid #4ad88a;
+}
+
+.mcp-market-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-market-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mcp-market-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+.mcp-market-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* 手动添加折叠表单 */
+.mcp-add-form {
+  margin-bottom: 16px;
+}
+
+.mcp-add-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+
+.mcp-add-summary:hover {
+  opacity: .8;
+}
+
+/* 工具按服务器分组 */
+.mcp-tools-group {
+  margin-bottom: 12px;
+}
+
+.mcp-tools-server-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 6px;
+  padding: 2px 8px;
+  background: var(--accent-light);
+  border-radius: 4px;
+  display: inline-block;
 }

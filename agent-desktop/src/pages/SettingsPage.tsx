@@ -4,7 +4,7 @@ import GeneralPanel from "./settings/GeneralPanel";
 import ModelsPanel from "./settings/ModelsPanel";
 import ShortcutsPanel from "./settings/ShortcutsPanel";
 import ToolsPanel from "./settings/ToolsPanel";
-import PluginsPanel from "./settings/PluginsPanel";
+import SkillsPanel from "./settings/SkillsPanel";
 import AboutPanel from "./settings/AboutPanel";
 import {
   SettingsIcon,
@@ -14,13 +14,14 @@ import {
   ToolIcon,
   HelpIcon,
   CloseIcon,
+  PackageIcon,
 } from "../components/Icons";
 
 interface SettingsPageProps {
   onClose?: () => void;
 }
 
-type SettingsSection = "general" | "models" | "shortcuts" | "tools" | "plugins" | "about";
+type SettingsSection = "general" | "models" | "shortcuts" | "tools" | "skills" | "about";
 
 export default function SettingsPage({ onClose }: SettingsPageProps) {
   const { t } = useTranslation();
@@ -31,7 +32,7 @@ export default function SettingsPage({ onClose }: SettingsPageProps) {
     { id: "models",    label: t("settings.sections.models"),    icon: <MonitorIcon size={18} /> },
     { id: "shortcuts", label: t("settings.sections.shortcuts"), icon: <KeyboardIcon size={18} /> },
     { id: "tools",     label: t("settings.sections.tools"),     icon: <ToolIcon size={18} /> },
-    { id: "plugins",   label: t("settings.sections.plugins"),   icon: <ModelIcon size={18} /> },
+    { id: "skills",    label: t("settings.sections.skills"),    icon: <PackageIcon size={18} /> },
     { id: "about",     label: t("settings.sections.about"),     icon: <HelpIcon size={18} /> },
   ];
 
@@ -41,7 +42,7 @@ export default function SettingsPage({ onClose }: SettingsPageProps) {
       case "models":    return <ModelsPanel />;
       case "shortcuts": return <ShortcutsPanel />;
       case "tools":     return <ToolsPanel />;
-      case "plugins":   return <PluginsPanel />;
+      case "skills":    return <SkillsPanel />;
       case "about":     return <AboutPanel />;
     }
   };

@@ -21,21 +21,22 @@
   - 键盘快捷键：`Ctrl+L` 聚焦地址栏
   - 需要 `tauri` 的 `unstable` feature（multiwebview 支持）
 
-### 新增
+- **Skills 技能生态系统**：设置页新增 Skills 面板，连接真实技能市场（11 files, +1610/-73）
+  - Rust 侧：`skills.rs` 模块 + 6 个 Tauri commands（list/toggle/market_list/install/delete/read_content）
+  - 解析 SKILL.md 的 YAML frontmatter 提取元信息（名称/描述/版本/分类）
+  - 已安装管理：启用/禁用（`.disabled` 标记文件）、卸载、预览 SKILL.md 内容
+  - 技能市场：从 GitHub raw 获取市场列表 JSON，支持分类筛选（前端/后端/AI/MCP/研究/工具）
+  - 一键安装：下载 SKILL.md + README.md 到本地 `.codebuddy/skills/` 目录
+  - 离线回退：无网络时使用内置预定义市场列表
+  - 7 个预设技能：前端开发工作室、全栈开发、MCP 构建器、Prompt 工程、智能体编排、深度研究、浏览器自动化
+  - 新增 10 个图标组件：Package/Download/Code/Store/Eye/ToggleLeft/ToggleRight/Search/Folder/Sparkles
+  - 完整中英文 i18n（skills 命名空间 23 个 key）
 
-- **MCP 工具系统（V0.2 核心）**：App 作为 MCP Host，可连接外部 MCP Server（stdio 子进程），聚合其暴露的 tools 供 LLM 通过 OpenAI function-calling 协议调用
-  - Rust 端新增极简 MCP 客户端（`src-tauri/src/mcp.rs`）：stdio 传输 + JSON-RPC 2.0，完成 `initialize` / `tools/list` / `tools/call` 握手与调用，无第三方 MCP SDK 依赖
-  - `chat_stream` 改造为**工具调用循环**：LLM 返回 `tool_calls` → 路由到对应 MCP Server 执行 → 结果回灌上下文 → 多轮直到无工具调用（最多 10 轮）
-  - 新增 Tauri 命令：`mcp_connect` / `mcp_disconnect` / `mcp_list_servers` / `mcp_list_tools` / `mcp_call_tool`
-  - 工具名采用 `server::tool` 命名空间，避免多 Server 工具名冲突
-- **设置页「工具 / MCP」面板**：可视化添加 / 连接 / 断开 / 移除 MCP 服务器，实时展示可用工具列表
-- **对话内工具步骤展示**：监听 `tool-call` / `tool-result` 事件，在对话流中实时显示 AI 调用的工具与结果
-- **启动自动重连**：应用启动时自动重连已保存的 MCP 服务器配置
-  - **持久化**：MCP 服务器配置写入 store.json
-  - **内置 Web 工具服务器**（`mcp-servers/web/index.mjs`）：零依赖、无需 API Key 的 Node MCP Server，提供 `web_search`（DuckDuckGo 联网搜索）与 `fetch_url`（爬取网页正文）。首次启动自动种子并连接，agent 开箱即用具备联网能力
-  - **内置 Tavily 搜索引擎**（`mcp-servers/tavily/index.mjs`）：零依赖 Node MCP Server，提供 `tavily_search`（AI 深度搜索）与 `tavily_extract`（结构化内容提取）。需设置 `TAVILY_API_KEY` 环境变量（可从 tavily.com 免费获取）。首次启动自动种子
-  - `McpServerUI` 新增 `env` 字段，支持为 MCP Server 进程传递环境变量
-  - `mcp-servers/` 目录随 Tauri bundle 打包为资源文件
+- **MCP 工具面板增强**：重构 ToolsPanel，新增市场推荐 + 实时状态
+  - MCP 市场折叠面板：5 个推荐服务器（filesystem/github/brave-search/postgres/puppeteer），一键安装
+  - 15 秒定时刷新连接状态，连接脉冲动画（`.mcp-status-dot`）
+  - 工具按服务器分组显示，手动添加折叠到 `<details>` 中
+  - 已连接服务器显示工具计数徽章
 
 ### 技术细节
 
