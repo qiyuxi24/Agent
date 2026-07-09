@@ -1,6 +1,7 @@
 mod browser;
 mod error_codes;
 mod mcp;
+mod plugins;
 mod skills;
 
 use error_codes::McpError;
@@ -529,6 +530,11 @@ pub fn run() {
             skills::skills_install,
             skills::skills_delete,
             skills::skills_read_content,
+            // 插件管理
+            plugins::plugins_list,
+            plugins::plugins_install,
+            plugins::plugins_delete,
+            plugins::plugins_toggle,
         ])
         .setup(|app| {
             // 首次启动：自动创建应用数据目录

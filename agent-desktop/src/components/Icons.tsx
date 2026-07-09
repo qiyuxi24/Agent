@@ -153,6 +153,24 @@ export function CheckIcon({ size = 14, className }: IconProps) {
   );
 }
 
+export function TrashIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
+export function XIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
 export function ChevronDownIcon({ size = 12, className }: IconProps) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -370,6 +388,17 @@ export function SparklesIcon({ size = 16, className }: IconProps) {
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z" />
       <path d="M18 14l.5 2L20 16.5 18 17l-.5 2L17 17l-2-.5L17 16z" />
+    </svg>
+  );
+}
+
+/* ===== 插件图标 ===== */
+
+/** 拼图块 — 插件扩展 */
+export function ExtensionIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18.5 8.5h-3.8a1 1 0 0 1-.97-.76A2.5 2.5 0 0 0 9 6a2.5 2.5 0 0 0-4.73 1.74 1 1 0 0 1-.97.76H.5L0 11l2.8 2.5H6.6a1 1 0 0 1 .97.76A2.5 2.5 0 0 0 12 16a2.5 2.5 0 0 0 4.43-1.74 1 1 0 0 1 .97-.76H21.2L24 11l-2.8-2.5z" transform="translate(0 3) scale(.9)" />
     </svg>
   );
 }

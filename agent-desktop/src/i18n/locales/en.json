@@ -56,6 +56,7 @@
       "shortcuts": "Shortcuts",
       "tools": "Tools / MCP",
       "skills": "Skills",
+      "plugins": "Plugins",
       "about": "About"
     },
 
@@ -149,6 +150,35 @@
       "needFields": "Please fill in name and command",
       "availableTools": "Available Tools",
       "noTools": "No tools available yet. Connect an MCP server first."
+    },
+
+    "plugins": {
+      "title": "Plugin Marketplace",
+      "desc": "Plugins are app-level extensions, similar to VS Code extensions. Install to add new panels, quick commands, themes, and more.",
+      "installed": "Installed",
+      "market": "Marketplace",
+      "search": "Search plugins...",
+      "all": "All",
+      "install": "Install",
+      "installing": "Installing...",
+      "uninstall": "Uninstall",
+      "enable": "Enable",
+      "disable": "Disable",
+      "version": "Version",
+      "author": "Author",
+      "noInstalled": "No plugins installed yet. Go to the Marketplace to discover more.",
+      "noMarket": "No plugins available. Check your network connection.",
+      "categories": {
+        "theme": "Theme",
+        "tool": "Tool",
+        "integration": "Integration",
+        "productivity": "Productivity",
+        "visualization": "Visualization",
+        "other": "Other"
+      },
+      "installSuccess": "Installed successfully",
+      "installFailed": "Installation failed",
+      "deleteConfirm": "Are you sure you want to uninstall \"{{name}}\"?"
     },
 
     "about": {
