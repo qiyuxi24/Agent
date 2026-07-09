@@ -530,6 +530,7 @@ pub fn run() {
             skills::skills_install,
             skills::skills_delete,
             skills::skills_read_content,
+            skills::skills_clawhub_install,
             // 插件管理
             plugins::plugins_list,
             plugins::plugins_install,

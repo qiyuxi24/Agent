@@ -29,6 +29,10 @@ interface SkillMarketEntry {
   download_url: string;
   size_bytes: number;
   installed: boolean;
+  source: string;           // "clawhub" | "local"
+  downloads: number;        // ClawHub 下载量
+  stars: number;            // ClawHub 星标数
+  external_install: boolean; // 需通过 clawhub CLI 安装
 }
 
 const CATEGORIES = ["all", "frontend", "backend", "ai", "mcp", "research", "tools", "general"] as const;
@@ -129,11 +133,32 @@ export default function SkillsPanel() {
     setInstallingId(entry.id);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("skills_install", { id: entry.id, downloadUrl: entry.download_url });
+
+      if (entry.external_install) {
+        // ClawHub 技能：尝试通过 CLI 安装
+        try {
+          const result = await invoke<string>("skills_clawhub_install", { id: entry.id });
+          console.log("[skills] ClawHub install:", result);
+        } catch (cliErr: any) {
+          // CLI 不可用，复制安装命令到剪贴板
+          const cmd = `npm i -g clawhub && clawhub login && clawhub skill install ${entry.id}`;
+          try {
+            await navigator.clipboard.writeText(cmd);
+            alert(`${t("settings.skills.installFailed")}: ${cliErr}\n\n安装命令已复制到剪贴板:\n${cmd}`);
+          } catch {
+            alert(`${t("settings.skills.installFailed")}: ${cliErr}\n\n请在终端运行:\n${cmd}`);
+          }
+          setInstallingId(null);
+          return;
+        }
+      } else {
+        // 本地技能：直接下载 SKILL.md
+        await invoke("skills_install", { id: entry.id, downloadUrl: entry.download_url });
+      }
+
       setMarket((prev) =>
         prev.map((e) => (e.id === entry.id ? { ...e, installed: true } : e)),
       );
-      // 刷新已安装列表
       await loadInstalled();
     } catch (e) {
       console.error("[skills] 安装失败:", e);
@@ -164,9 +189,16 @@ export default function SkillsPanel() {
 
   // 格式化大小
   const fmtSize = (bytes: number) => {
+    if (bytes === 0) return "";
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  // 格式化下载量
+  const fmtDownloads = (n: number) => {
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+    return String(n);
   };
 
   // 获取描述（根据语言）
@@ -342,13 +374,18 @@ export default function SkillsPanel() {
               <div key={entry.id} className={`skill-card market ${entry.installed ? "installed" : ""}`}>
                 <div className="skill-card-main">
                   <div className="skill-card-icon">
-                    <SparklesIcon size={20} />
+                    {entry.source === "clawhub" ? <StoreIcon size={20} /> : <SparklesIcon size={20} />}
                   </div>
                   <div className="skill-card-info">
                     <div className="skill-card-head">
                       <span className="skill-card-name">{entry.name}</span>
                       <span className="skill-card-version">v{entry.version}</span>
                       <span className="skill-card-cat">{catLabel(entry.category)}</span>
+                      {entry.source === "clawhub" && (
+                        <span className="skill-source-badge" title="来自 ClawHub 技能市场">
+                          ClawHub
+                        </span>
+                      )}
                       {entry.installed && (
                         <span className="skill-installed-badge">
                           <CheckIcon size={12} /> 已安装
@@ -357,7 +394,20 @@ export default function SkillsPanel() {
                     </div>
                     <p className="skill-card-desc">{desc(entry)}</p>
                     <div className="skill-card-meta">
-                      <span>{fmtSize(entry.size_bytes)}</span>
+                      {entry.size_bytes > 0 && <span>{fmtSize(entry.size_bytes)}</span>}
+                      {entry.downloads > 0 && (
+                        <span title="下载量">
+                          <DownloadIcon size={11} /> {fmtDownloads(entry.downloads)}
+                        </span>
+                      )}
+                      {entry.stars > 0 && (
+                        <span title="星标">★ {entry.stars}</span>
+                      )}
+                      {entry.external_install && !entry.installed && (
+                        <span className="skill-external-hint" title="需通过 ClawHub CLI 安装">
+                          CLI 安装
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

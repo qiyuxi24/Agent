@@ -1,15 +1,20 @@
 // Skills 管理模块
 // - 扫描本地 .codebuddy/skills/ 目录
-// - 启用/禁用 skill（通过 .gitignore 标记）
-// - 从 GitHub raw 下载 skill SKILL.md + 资源
+// - 启用/禁用 skill（通过 .disabled 标记）
+// - ClawHub 市场 API 集成（主数据源）
+// - GitHub raw 下载作为安装方式
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
 
 /// Skills 根目录（相对于项目根目录的 .codebuddy/skills/）
 const SKILLS_DIR: &str = ".codebuddy/skills";
+
+/// ClawHub API 地址
+const CLAWHUB_API: &str = "https://clawhub.ai/api/v1/skills";
 
 /// 单个 Skill 的描述信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +32,7 @@ pub struct SkillInfo {
     pub size_bytes: u64,
 }
 
-/// Skills 市场的条目（从远程 JSON 获取）
+/// Skills 市场的条目（统一接口）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMarketEntry {
     pub id: String,
@@ -36,11 +41,71 @@ pub struct SkillMarketEntry {
     pub description_en: String,
     pub version: String,
     pub category: String,
+    /// 下载地址（GitHub raw URL 或空）
+    #[serde(default)]
     pub download_url: String,
     pub size_bytes: u64,
     /// 是否已安装
     #[serde(default)]
     pub installed: bool,
+    /// 数据来源: "clawhub" | "local"
+    #[serde(default = "default_source")]
+    pub source: String,
+    /// ClawHub 下载量
+    #[serde(default)]
+    pub downloads: u64,
+    /// ClawHub 星标数
+    #[serde(default)]
+    pub stars: u64,
+    /// 是否需要通过 clawhub CLI 安装
+    #[serde(default)]
+    pub external_install: bool,
+}
+
+fn default_source() -> String { "local".into() }
+
+/// ClawHub API 返回的技能条目
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct ClawHubSkill {
+    slug: String,
+    #[serde(rename = "displayName")]
+    display_name: String,
+    summary: String,
+    description: Option<String>,
+    #[serde(default)]
+    topics: Vec<String>,
+    tags: Option<serde_json::Value>,
+    stats: Option<ClawHubStats>,
+    #[serde(rename = "latestVersion")]
+    latest_version: Option<ClawHubVersion>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct ClawHubStats {
+    #[serde(default)]
+    downloads: u64,
+    #[serde(default)]
+    installs: u64,
+    #[serde(default)]
+    stars: u64,
+    #[serde(default)]
+    versions: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClawHubVersion {
+    version: String,
+}
+
+/// ClawHub API 分页响应
+#[derive(Debug, Deserialize)]
+struct ClawHubResponse {
+    items: Vec<ClawHubSkill>,
+    #[serde(rename = "nextCursor")]
+    #[allow(dead_code)]
+    next_cursor: Option<String>,
 }
 
 /// 获取 skills 根目录路径
@@ -224,31 +289,170 @@ pub fn skills_toggle(app: AppHandle, id: String, enabled: bool) -> Result<(), St
     Ok(())
 }
 
-/// 获取 Skills 市场列表（从 GitHub 远程仓库获取）
-/// 如果没有网络则返回内置的预定义列表
+/// 获取 Skills 市场列表（优先 ClawHub API，合并本地 market.json 作为补充）
 #[tauri::command]
 pub async fn skills_market_list() -> Result<Vec<SkillMarketEntry>, String> {
-    let market_url = "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills/market.json";
+    let mut entries: Vec<SkillMarketEntry> = Vec::new();
+    let mut has_clawhub = false;
 
-    // 尝试从远程获取
-    match reqwest::get(market_url).await {
+    // 1. 尝试从 ClawHub API 获取市场数据
+    let clawhub_url = format!("{CLAWHUB_API}?limit=30");
+    match reqwest::get(&clawhub_url).await {
         Ok(resp) if resp.status().is_success() => {
-            let entries: Vec<SkillMarketEntry> = resp
-                .json()
-                .await
-                .map_err(|e| format!("解析市场列表失败: {}", e))?;
-            return Ok(entries);
+            match resp.json::<ClawHubResponse>().await {
+                Ok(data) => {
+                    has_clawhub = true;
+                    for skill in data.items {
+                        entries.push(clawhub_to_entry(&skill));
+                    }
+                    eprintln!("[skills] ClawHub: 获取到 {} 个技能", entries.len());
+                }
+                Err(e) => {
+                    eprintln!("[skills] ClawHub 解析失败: {}", e);
+                }
+            }
         }
         Ok(resp) => {
-            eprintln!("[skills] 市场请求返回状态码: {}", resp.status());
+            eprintln!("[skills] ClawHub 返回状态: {}", resp.status());
         }
         Err(e) => {
-            eprintln!("[skills] 获取市场列表失败: {}", e);
+            eprintln!("[skills] ClawHub 请求失败: {}", e);
         }
     }
 
-    // 回退：返回内置列表
-    Ok(builtin_market())
+    // 2. 合并本地 market.json（补充 ClawHub 中没有的技能）
+    let local = if has_clawhub {
+        match fetch_local_market().await {
+            Ok(local_entries) => {
+                // 只保留 ClawHub 中没有的技能
+                let clawhub_ids: HashSet<String> =
+                    entries.iter().map(|e| e.id.clone()).collect();
+                local_entries
+                    .into_iter()
+                    .filter(|e| !clawhub_ids.contains(&e.id))
+                    .collect()
+            }
+            Err(_) => Vec::new(),
+        }
+    } else {
+        // ClawHub 不可用，直接用本地数据
+        match fetch_local_market().await {
+            Ok(local_entries) => local_entries,
+            Err(_) => builtin_market(),
+        }
+    };
+
+    entries.extend(local);
+
+    // 按下载量降序排列
+    entries.sort_by(|a, b| b.downloads.cmp(&a.downloads));
+
+    Ok(entries)
+}
+
+/// 将 ClawHub API 条目转为统一的 SkillMarketEntry
+fn clawhub_to_entry(skill: &ClawHubSkill) -> SkillMarketEntry {
+    let stats = skill.stats.as_ref();
+    let version = skill
+        .latest_version
+        .as_ref()
+        .map(|v| v.version.clone())
+        .unwrap_or_else(|| "0.1.0".into());
+
+    // 尝试从 description 或 topic 推断分类
+    let category = infer_category(&skill.slug, &skill.topics);
+
+    // ClawHub 技能没有直接下载 URL，标记为 external_install
+    let download_url = String::new();
+
+    SkillMarketEntry {
+        id: skill.slug.clone(),
+        name: skill.display_name.clone(),
+        description_zh: skill
+            .description
+            .clone()
+            .unwrap_or_else(|| skill.summary.clone()),
+        description_en: skill.summary.clone(),
+        version,
+        category,
+        download_url,
+        size_bytes: 0,
+        installed: false,
+        source: "clawhub".into(),
+        downloads: stats.map(|s| s.downloads).unwrap_or(0),
+        stars: stats.map(|s| s.stars).unwrap_or(0),
+        external_install: true,
+    }
+}
+
+/// 根据 slug 和 topics 推断分类
+fn infer_category(slug: &str, topics: &[String]) -> String {
+    let slug_lower = slug.to_lowercase();
+    let topics_str = topics.join(" ").to_lowercase();
+
+    if slug_lower.contains("web") || slug_lower.contains("frontend") || topics_str.contains("web") || topics_str.contains("react") || topics_str.contains("vue") {
+        "frontend".into()
+    } else if slug_lower.contains("cloud") || slug_lower.contains("server") || topics_str.contains("cloud") || topics_str.contains("backend") {
+        "backend".into()
+    } else if slug_lower.contains("mini") || slug_lower.contains("wechat") || topics_str.contains("miniprogram") {
+        "frontend".into()
+    } else if slug_lower.contains("ai") || slug_lower.contains("agent") || slug_lower.contains("ml") || topics_str.contains("ai") || topics_str.contains("agent") {
+        "ai".into()
+    } else if slug_lower.contains("search") || slug_lower.contains("mcp") || topics_str.contains("mcp") {
+        "mcp".into()
+    } else if slug_lower.contains("research") || slug_lower.contains("marketing") || slug_lower.contains("playbook") || topics_str.contains("research") {
+        "research".into()
+    } else if slug_lower.contains("design") || slug_lower.contains("ui") || topics_str.contains("design") {
+        "tools".into()
+    } else {
+        "general".into()
+    }
+}
+
+/// 从远程 GitHub 获取本地 market.json
+async fn fetch_local_market() -> Result<Vec<SkillMarketEntry>, String> {
+    let market_url =
+        "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills/market.json";
+    let resp = reqwest::get(market_url)
+        .await
+        .map_err(|e| format!("网络请求失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    resp.json::<Vec<SkillMarketEntry>>()
+        .await
+        .map_err(|e| format!("JSON 解析失败: {e}"))
+}
+
+/// 通过 ClawHub CLI 安装技能
+#[tauri::command]
+pub async fn skills_clawhub_install(id: String) -> Result<String, String> {
+    // 尝试运行 clawhub CLI 安装
+    let output = tokio::process::Command::new("clawhub")
+        .args(["skill", "install", &id])
+        .output()
+        .await;
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            Ok(stdout)
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            // 如果 CLI 未安装，返回提示
+            if stderr.contains("not found") || stderr.contains("No such file") {
+                Err(format!(
+                    "clawhub CLI 未安装。请运行: npm i -g clawhub && clawhub login && clawhub skill install {id}"
+                ))
+            } else {
+                Err(format!("安装失败: {}", stderr))
+            }
+        }
+        Err(_) => Err(format!(
+            "clawhub CLI 未安装。请运行: npm i -g clawhub && clawhub login && clawhub skill install {id}"
+        )),
+    }
 }
 
 /// 从 GitHub 下载并安装一个 Skill
@@ -338,83 +542,29 @@ pub fn skills_read_content(app: AppHandle, id: String) -> Result<String, String>
 
 fn builtin_market() -> Vec<SkillMarketEntry> {
     let base = "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills";
+    let local = || SkillMarketEntry {
+        source: "local".into(),
+        downloads: 0,
+        stars: 0,
+        external_install: false,
+        // Placeholder fields set below
+        id: String::new(),
+        name: String::new(),
+        description_zh: String::new(),
+        description_en: String::new(),
+        version: String::new(),
+        category: String::new(),
+        download_url: String::new(),
+        size_bytes: 0,
+        installed: false,
+    };
     vec![
-        SkillMarketEntry {
-            id: "frontend-dev".into(),
-            name: "前端开发工作室".into(),
-            description_zh: "全栈前端开发：精美 UI 设计、电影级动画、AI 媒体生成、转化文案。构建落地页、营销网站、产品页、仪表盘。".into(),
-            description_en: "Full-stack frontend: premium UI, cinematic animations, AI media, persuasive copy.".into(),
-            version: "0.1.1".into(),
-            category: "frontend".into(),
-            download_url: format!("{}/frontend-dev", base),
-            size_bytes: 14480,
-            installed: false,
-        },
-        SkillMarketEntry {
-            id: "fullstack-dev".into(),
-            name: "全栈开发".into(),
-            description_zh: "后端架构 + 前后端集成：Express/Next.js/FastAPI/Go，REST API，实时功能(SSE/WebSocket)，认证，文件上传。".into(),
-            description_en: "Backend architecture & fullstack integration: REST APIs, real-time, auth, file uploads.".into(),
-            version: "0.1.0".into(),
-            category: "backend".into(),
-            download_url: format!("{}/fullstack-dev", base),
-            size_bytes: 13970,
-            installed: false,
-        },
-        SkillMarketEntry {
-            id: "mcp-builder".into(),
-            name: "MCP 服务器构建器".into(),
-            description_zh: "构建高质量 MCP 服务器：Python/Node SDK，工具设计，stdio 传输，让 LLM 调用外部服务。".into(),
-            description_en: "Build MCP servers: Python/Node SDK, tool design, stdio transport, LLM ↔ external services.".into(),
-            version: "0.1.0".into(),
-            category: "mcp".into(),
-            download_url: format!("{}/mcp-builder", base),
-            size_bytes: 7500,
-            installed: false,
-        },
-        SkillMarketEntry {
-            id: "prompt-engineering-expert".into(),
-            name: "Prompt 工程专家".into(),
-            description_zh: "高级 Prompt 工程：自定义指令设计、提示词优化、AI Agent 行为调优。".into(),
-            description_en: "Advanced prompt engineering: custom instructions, prompt optimization, AI agent tuning.".into(),
-            version: "0.1.0".into(),
-            category: "ai".into(),
-            download_url: format!("{}/prompt-engineering-expert", base),
-            size_bytes: 1630,
-            installed: false,
-        },
-        SkillMarketEntry {
-            id: "agent-team-orchestration".into(),
-            name: "智能体团队编排".into(),
-            description_zh: "多智能体团队编排：角色定义、任务流转、交接协议、质量门禁。".into(),
-            description_en: "Multi-agent team orchestration: roles, task routing, handoff protocols, quality gates.".into(),
-            version: "0.1.0".into(),
-            category: "ai".into(),
-            download_url: format!("{}/agent-team-orchestration", base),
-            size_bytes: 5100,
-            installed: false,
-        },
-        SkillMarketEntry {
-            id: "deep-research".into(),
-            name: "深度研究".into(),
-            description_zh: "结构化深度研究：生成大纲、并行搜索、Markdown 报告。支持学术研究、技术选型、市场分析。".into(),
-            description_en: "Structured deep research: outline generation, parallel search, Markdown reports.".into(),
-            version: "0.1.0".into(),
-            category: "research".into(),
-            download_url: format!("{}/deep-research", base),
-            size_bytes: 2325,
-            installed: false,
-        },
-        SkillMarketEntry {
-            id: "browser-use".into(),
-            name: "浏览器自动化".into(),
-            description_zh: "浏览器交互自动化：网页测试、表单填写、截图、数据提取。".into(),
-            description_en: "Browser automation: web testing, form filling, screenshots, data extraction.".into(),
-            version: "0.1.0".into(),
-            category: "tools".into(),
-            download_url: format!("{}/browser-use", base),
-            size_bytes: 7760,
-            installed: false,
-        },
+        SkillMarketEntry { id: "frontend-dev".into(), name: "前端开发工作室".into(), description_zh: "全栈前端开发：精美 UI 设计、电影级动画、AI 媒体生成、转化文案。构建落地页、营销网站、产品页、仪表盘。".into(), description_en: "Full-stack frontend: premium UI, cinematic animations, AI media, persuasive copy.".into(), version: "0.1.1".into(), category: "frontend".into(), download_url: format!("{base}/frontend-dev"), size_bytes: 14480, ..local() },
+        SkillMarketEntry { id: "fullstack-dev".into(), name: "全栈开发".into(), description_zh: "后端架构 + 前后端集成：Express/Next.js/FastAPI/Go，REST API，实时功能(SSE/WebSocket)，认证，文件上传。".into(), description_en: "Backend architecture & fullstack integration: REST APIs, real-time, auth, file uploads.".into(), version: "0.1.0".into(), category: "backend".into(), download_url: format!("{base}/fullstack-dev"), size_bytes: 13970, ..local() },
+        SkillMarketEntry { id: "mcp-builder".into(), name: "MCP 服务器构建器".into(), description_zh: "构建高质量 MCP 服务器：Python/Node SDK，工具设计，stdio 传输，让 LLM 调用外部服务。".into(), description_en: "Build MCP servers: Python/Node SDK, tool design, stdio transport, LLM ↔ external services.".into(), version: "0.1.0".into(), category: "mcp".into(), download_url: format!("{base}/mcp-builder"), size_bytes: 7500, ..local() },
+        SkillMarketEntry { id: "prompt-engineering-expert".into(), name: "Prompt 工程专家".into(), description_zh: "高级 Prompt 工程：自定义指令设计、提示词优化、AI Agent 行为调优。".into(), description_en: "Advanced prompt engineering: custom instructions, prompt optimization, AI agent tuning.".into(), version: "0.1.0".into(), category: "ai".into(), download_url: format!("{base}/prompt-engineering-expert"), size_bytes: 1630, ..local() },
+        SkillMarketEntry { id: "agent-team-orchestration".into(), name: "智能体团队编排".into(), description_zh: "多智能体团队编排：角色定义、任务流转、交接协议、质量门禁。".into(), description_en: "Multi-agent team orchestration: roles, task routing, handoff protocols, quality gates.".into(), version: "0.1.0".into(), category: "ai".into(), download_url: format!("{base}/agent-team-orchestration"), size_bytes: 5100, ..local() },
+        SkillMarketEntry { id: "deep-research".into(), name: "深度研究".into(), description_zh: "结构化深度研究：生成大纲、并行搜索、Markdown 报告。支持学术研究、技术选型、市场分析。".into(), description_en: "Structured deep research: outline generation, parallel search, Markdown reports.".into(), version: "0.1.0".into(), category: "research".into(), download_url: format!("{base}/deep-research"), size_bytes: 2325, ..local() },
+        SkillMarketEntry { id: "browser-use".into(), name: "浏览器自动化".into(), description_zh: "浏览器交互自动化：网页测试、表单填写、截图、数据提取。".into(), description_en: "Browser automation: web testing, form filling, screenshots, data extraction.".into(), version: "0.1.0".into(), category: "tools".into(), download_url: format!("{base}/browser-use"), size_bytes: 7760, ..local() },
     ]
 }
