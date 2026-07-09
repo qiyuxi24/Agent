@@ -4,11 +4,12 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import Sidebar from "./components/Sidebar";
 import ChatView, { type ChatViewHandle } from "./pages/ChatView";
 import SettingsPage from "./pages/SettingsPage";
+import BrowserPanel from "./pages/BrowserPanel";
 import { useAppStore } from "./stores/appStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { PanelLeftOpenIcon } from "./components/Icons";
 
-type Page = "chat" | "settings";
+type Page = "chat" | "settings" | "browser";
 
 function App() {
   const { t } = useTranslation();
@@ -113,7 +114,11 @@ function App() {
           onToggleCollapse={toggleSidebar}
         />
         <main className="main-content">
-          <ChatView ref={chatViewRef} conversationId={activeConversationId} />
+          {page === "browser" ? (
+            <BrowserPanel />
+          ) : (
+            <ChatView ref={chatViewRef} conversationId={activeConversationId} />
+          )}
         </main>
 
         {/* 侧边栏折叠时，左上角浮动展开按钮 */}

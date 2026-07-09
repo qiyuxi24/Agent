@@ -10,6 +10,19 @@
 
 ### 新增
 
+- **内置浏览器**：侧边栏新增「浏览器」入口，支持完整网页浏览（9 files, +712/-9）
+  - 地址栏：输入 URL 自动补全 https://，中文/空格自动转为 Google 搜索
+  - 导航控件：后退/前进（基于独立历史栈）、刷新、主页（Google）
+  - 加载状态：顶部渐变动画进度条 + 地址栏旋转加载图标
+  - 错误处理：iframe 加载失败时显示错误卡片 + 重试/外部打开按钮
+  - 状态栏：底部显示当前页面标题
+  - 键盘快捷键：`Ctrl+L` 聚焦地址栏
+  - 安全沙箱：`sandbox="allow-scripts allow-same-origin allow-forms allow-popups"`
+  - 外部浏览器打开：工具栏右侧按钮一键在系统浏览器打开当前页面
+  - 国际化：完整中/英文翻译（17 个 key）
+
+### 新增
+
 - **MCP 工具系统（V0.2 核心）**：App 作为 MCP Host，可连接外部 MCP Server（stdio 子进程），聚合其暴露的 tools 供 LLM 通过 OpenAI function-calling 协议调用
   - Rust 端新增极简 MCP 客户端（`src-tauri/src/mcp.rs`）：stdio 传输 + JSON-RPC 2.0，完成 `initialize` / `tools/list` / `tools/call` 握手与调用，无第三方 MCP SDK 依赖
   - `chat_stream` 改造为**工具调用循环**：LLM 返回 `tool_calls` → 路由到对应 MCP Server 执行 → 结果回灌上下文 → 多轮直到无工具调用（最多 10 轮）

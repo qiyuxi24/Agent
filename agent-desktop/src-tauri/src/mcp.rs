@@ -136,10 +136,10 @@ impl McpClient {
             for t in arr {
                 match serde_json::from_value::<McpTool>(t.clone()) {
                     Ok(tool) => client.tools.push(tool),
-                    Err(err) => {
+                    Err(e) => {
                         eprintln!(
                             "[MCP:{}] 跳过无法解析的工具定义: {}",
-                            config.name, err
+                            config.name, e
                         );
                     }
                 }

@@ -21,7 +21,8 @@
     "unpinChat": "Unpin",
     "deleteChat": "Delete",
     "collapseSidebar": "Collapse sidebar",
-    "expandSidebar": "Expand sidebar"
+    "expandSidebar": "Expand sidebar",
+    "browser": "Browser"
   },
 
   "chat": {
@@ -126,5 +127,21 @@
       "version": "Agent Desktop v0.1.0",
       "tech": "Built with Tauri v2 + React + Rust"
     }
+  },
+
+  "browser": {
+    "back": "Back",
+    "forward": "Forward",
+    "reload": "Reload",
+    "home": "Home",
+    "addressPlaceholder": "Enter URL or search...",
+    "openExternally": "Open in browser",
+    "openInBrowser": "Open Browser",
+    "loading": "Loading...",
+    "loadError": "Failed to load page. Check the URL or network connection.",
+    "retry": "Retry",
+    "blockedTitle": "Cannot display here",
+    "blockedMessage": "This website doesn't allow embedding. Open in your external browser.",
+    "searchWith": "Search"
   }
 }

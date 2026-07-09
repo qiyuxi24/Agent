@@ -21,7 +21,8 @@
     "unpinChat": "取消置顶",
     "deleteChat": "删除对话",
     "collapseSidebar": "收起侧边栏",
-    "expandSidebar": "展开侧边栏"
+    "expandSidebar": "展开侧边栏",
+    "browser": "浏览器"
   },
 
   "chat": {
@@ -126,5 +127,21 @@
       "version": "Agent Desktop v0.1.0",
       "tech": "基于 Tauri v2 + React + Rust 构建"
     }
+  },
+
+  "browser": {
+    "back": "后退",
+    "forward": "前进",
+    "reload": "刷新",
+    "home": "主页",
+    "addressPlaceholder": "输入网址或搜索...",
+    "openExternally": "在外部浏览器打开",
+    "openInBrowser": "打开浏览器",
+    "loading": "加载中...",
+    "loadError": "页面加载失败，请检查网址或网络连接。",
+    "retry": "重试",
+    "blockedTitle": "无法在此处显示",
+    "blockedMessage": "该网站不允许嵌入显示，请在外部浏览器中打开。",
+    "searchWith": "搜索"
   }
 }
