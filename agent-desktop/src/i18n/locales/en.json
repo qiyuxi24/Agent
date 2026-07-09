@@ -1,0 +1,130 @@
+{
+  "app": {
+    "loading": "Loading..."
+  },
+
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "message": "The application encountered an error. Please try again.",
+    "retry": "Retry"
+  },
+
+  "sidebar": {
+    "appTitle": "Agent Desktop",
+    "newChat": "New Chat",
+    "emptyCantCreate": "Current conversation is empty",
+    "chat": "Chat",
+    "settings": "Settings",
+    "history": "History",
+    "moreOptions": "More options",
+    "pinChat": "Pin",
+    "unpinChat": "Unpin",
+    "deleteChat": "Delete",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar"
+  },
+
+  "chat": {
+    "empty": {
+      "title": "Start a Conversation",
+      "subtitle": "Type a message below to chat with AI"
+    },
+    "input": {
+      "placeholder": "Type a message... (Enter to send, Shift+Enter for new line)"
+    },
+    "thinking": "Thinking...",
+    "stop": "Stop generating",
+    "scrollToBottom": "Scroll to bottom",
+    "noModel": "No model configured",
+    "noModelHint": "No models configured. Go to Settings to add one.",
+    "needApiKey": "Please configure an API Key in Settings first",
+    "error": {
+      "requestFailed": "Request failed",
+      "apiError": "API Error",
+      "cannotReadStream": "Cannot read response stream"
+    }
+  },
+
+  "settings": {
+    "title": "Settings",
+    "close": "Back to chat",
+
+    "sections": {
+      "general": "General",
+      "models": "AI Models",
+      "shortcuts": "Shortcuts",
+      "tools": "Tools / MCP",
+      "plugins": "Plugins",
+      "about": "About"
+    },
+
+    "general": {
+      "language": "Language",
+      "theme": "Theme",
+      "themeSystem": "System",
+      "themeLight": "Light",
+      "themeDark": "Dark"
+    },
+
+    "models": {
+      "add": "Add",
+      "name": "Name",
+      "namePlaceholder": "e.g. OpenAI, DeepSeek",
+      "apiBase": "API Base URL",
+      "apiKey": "API Key",
+      "modelsLabel": "Models (comma-separated)",
+      "modelsPlaceholder": "gpt-4o, gpt-4o-mini",
+      "modelsHint": "Separate model names with commas",
+      "confirm": "Confirm",
+      "cancel": "Cancel",
+      "save": "Save",
+      "edit": "Edit",
+      "delete": "Delete",
+      "empty": "No models yet. Click [Add] above to configure one.",
+      "currentModels": "Models:",
+      "addModelPlaceholder": "Add model...",
+      "removeModel": "Remove {{model}}"
+    },
+
+    "shortcuts": {
+      "recording": "Press shortcut keys...",
+      "clickToSet": "Click to set",
+      "resetDefault": "Reset to default",
+      "help": "Click a shortcut → press keys → release to save. Max 3 keys. Esc to cancel.",
+      "actions": {
+        "newConversation": "New Chat",
+        "focusInput": "Focus Input",
+        "toggleModelPicker": "Toggle Model",
+        "openSettings": "Open Settings"
+      }
+    },
+
+    "plugins": {
+      "comingSoon": "Plugin system coming soon."
+    },
+
+    "tools": {
+      "title": "Tools / MCP",
+      "desc": "Connect MCP servers so the AI can call external tools (file ops, web search) during chat. Tools are triggered automatically by the LLM via function calling.",
+      "empty": "No MCP servers added yet. Use the form below to add one.",
+      "name": "Name",
+      "namePlaceholder": "e.g. filesystem",
+      "command": "Command",
+      "args": "Arguments",
+      "argsHint": "Space-separated arguments, e.g.: -y @modelcontextprotocol/server-filesystem .",
+      "connect": "Connect",
+      "disconnect": "Disconnect",
+      "remove": "Remove",
+      "connected": "Connected",
+      "offline": "Offline",
+      "needFields": "Please fill in name and command",
+      "availableTools": "Available Tools",
+      "noTools": "No tools available yet. Connect an MCP server first."
+    },
+
+    "about": {
+      "version": "Agent Desktop v0.1.0",
+      "tech": "Built with Tauri v2 + React + Rust"
+    }
+  }
+}

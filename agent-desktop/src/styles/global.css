@@ -11,5 +11,6 @@
 @import './settings-layout.css';
 @import './settings-forms.css';
 @import './settings-provider.css';
+@import './mcp.css';
 @import './model-picker.css';
 @import './scrollbar.css';

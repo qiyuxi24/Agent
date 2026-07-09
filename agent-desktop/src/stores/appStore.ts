@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
+import i18n from "../i18n";
+import { encryptApiKey, decryptApiKey } from "../lib/crypto";
 
 // ========== 类型定义 ==========
 
@@ -7,6 +9,7 @@ export interface Conversation {
   id: string;
   title: string;
   createdAt: string;
+  pinned?: boolean;
 }
 
 export interface Message {
@@ -37,14 +40,6 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   openSettings:      { keys: ["ctrl", ","] },
 };
 
-/** 快捷键动作的中文标签 */
-export const SHORTCUT_LABELS: Record<ShortcutAction, string> = {
-  newConversation:   "新建对话",
-  focusInput:        "聚焦输入框",
-  toggleModelPicker: "切换模型",
-  openSettings:      "打开设置",
-};
-
 /** 一个模型提供商（如 OpenAI、DeepSeek、通义千问） */
 export interface ModelProvider {
   id: string;          // 唯一 ID
@@ -53,6 +48,14 @@ export interface ModelProvider {
   apiKey: string;      // API Key
   models: string[];    // 模型列表，如 ["gpt-4o", "gpt-4o-mini"]
   activeModel: string; // 当前选中的模型
+}
+
+/** MCP 服务器配置（持久化，运行时由 Rust 端连接子进程） */
+export interface McpServerUI {
+  name: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
 }
 
 // ========== Store 类型 ==========
@@ -72,8 +75,14 @@ interface AppState {
   providers: ModelProvider[];
   activeProviderId: string | null;
 
+  // MCP 服务器配置
+  mcpServers: McpServerUI[];
+  mcpSeeded: boolean;
+
   // 状态
   ready: boolean;
+  persistErrorCount: number;
+  sidebarCollapsed: boolean;
 
   // 动作 - 对话
   setActiveConversation: (id: string) => void;
@@ -82,6 +91,7 @@ interface AppState {
   updateLastAssistantMessage: (conversationId: string, content: string) => void;
   updateConversationTitle: (id: string, title: string) => void;
   deleteConversation: (id: string) => void;
+  togglePinConversation: (id: string) => void;
 
   // 动作 - 设置
   setTheme: (theme: ThemeMode) => void;
@@ -97,8 +107,15 @@ interface AppState {
   removeModel: (providerId: string, model: string) => void;
   setActiveModel: (providerId: string, model: string) => void;
 
+  // 动作 - MCP 服务器管理
+  addMcpServer: (server: McpServerUI) => void;
+  removeMcpServer: (name: string) => void;
+
   // 便捷方法：获取当前激活的 provider 和 model
   getActiveProvider: () => ModelProvider | undefined;
+
+  // 侧边栏折叠
+  toggleSidebar: () => void;
 
   // 动作 - 持久化
   loadFromStore: () => Promise<void>;
@@ -128,6 +145,16 @@ function applyTheme(theme: ThemeMode) {
   }
 }
 
+/** 延迟写盘（2 秒 debounce）：所有 action 共用一个 timer，避免流式对话时频繁写盘 */
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    useAppStore.getState().saveToStore();
+  }, 2000);
+}
+
 // 默认 provider（首次使用）
 const defaultProvider = (): ModelProvider => ({
   id: crypto.randomUUID(),
@@ -137,6 +164,21 @@ const defaultProvider = (): ModelProvider => ({
   models: ["gpt-4o"],
   activeModel: "gpt-4o",
 });
+
+// 内置 Web 工具 MCP Server（联网搜索 + 网页爬取，零依赖、无需 API Key）
+const DEFAULT_WEB_SERVER: McpServerUI = {
+  name: "web",
+  command: "node",
+  args: ["c:/Users/34239/Documents/GitHub/Agent/agent-desktop/mcp-servers/web/index.mjs"],
+};
+
+// 内置 Tavily MCP Server（AI 搜索引擎 + 内容提取，需设置 TAVILY_API_KEY 环境变量）
+// Key 获取: https://tavily.com
+const DEFAULT_TAVILY_SERVER: McpServerUI = {
+  name: "tavily",
+  command: "node",
+  args: ["c:/Users/34239/Documents/GitHub/Agent/agent-desktop/mcp-servers/tavily/index.mjs"],
+};
 
 // ========== Store 实现 ==========
 
@@ -158,7 +200,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   providers: [],
   activeProviderId: null,
 
+  mcpServers: [],
+
+  mcpSeeded: false,
+
   ready: false,
+  persistErrorCount: 0,
+  sidebarCollapsed: false,
 
   // ---- 对话操作 ----
 
@@ -181,7 +229,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       conversations: [conv, ...s.conversations],
       activeConversationId: id,
     }));
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
     return id;
   },
 
@@ -206,7 +254,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         }));
       }
     }
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
   },
 
   updateLastAssistantMessage: (conversationId, content) => {
@@ -220,9 +268,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return { messages: { ...state.messages, [conversationId]: updated } };
     });
-    if (content.endsWith("\n") || content.length > 200) {
-      setTimeout(() => get().saveToStore(), 200);
-    }
+    scheduleSave();
   },
 
   updateConversationTitle: (id, title) =>
@@ -242,7 +288,16 @@ export const useAppStore = create<AppState>((set, get) => ({
           : state.activeConversationId;
       return { conversations, messages: restMessages, activeConversationId: activeId };
     });
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
+  },
+
+  togglePinConversation: (id) => {
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, pinned: !c.pinned } : c,
+      ),
+    }));
+    scheduleSave();
   },
 
   // ---- 设置操作 ----
@@ -250,19 +305,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   setTheme: (theme) => {
     set({ theme });
     applyTheme(theme);
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
   },
 
   setLanguage: (language) => {
+    i18n.changeLanguage(language);
     set({ language });
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
   },
 
   setShortcut: (action, keys) => {
     set((s) => ({
       shortcuts: { ...s.shortcuts, [action]: { keys } },
     }));
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
   },
 
   // ---- 模型管理 ----
@@ -281,7 +337,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       providers: [...s.providers, provider],
       activeProviderId: s.activeProviderId || id,
     }));
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
   },
 
   updateProvider: (id, updates) => {
@@ -290,7 +346,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         p.id === id ? { ...p, ...updates } : p
       ),
     }));
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
   },
 
   removeProvider: (id) => {
@@ -301,7 +357,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         : s.activeProviderId;
       return { providers, activeProviderId };
     });
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
   },
 
   setActiveProvider: (id) => set({ activeProviderId: id }),
@@ -314,7 +370,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           : p
       ),
     }));
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
   },
 
   removeModel: (providerId, model) => {
@@ -329,7 +385,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           : p
       ),
     }));
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
   },
 
   setActiveModel: (providerId, model) => {
@@ -338,12 +394,37 @@ export const useAppStore = create<AppState>((set, get) => ({
         p.id === providerId ? { ...p, activeModel: model } : p
       ),
     }));
-    setTimeout(() => get().saveToStore(), 100);
+    scheduleSave();
+  },
+
+  addMcpServer: (server) => {
+    set((s) => {
+      const exists = s.mcpServers.some((m) => m.name === server.name);
+      if (exists) {
+        return {
+          mcpServers: s.mcpServers.map((m) => (m.name === server.name ? server : m)),
+        };
+      }
+      return { mcpServers: [...s.mcpServers, server] };
+    });
+    scheduleSave();
+  },
+
+  removeMcpServer: (name) => {
+    set((s) => ({
+      mcpServers: s.mcpServers.filter((m) => m.name !== name),
+    }));
+    scheduleSave();
   },
 
   getActiveProvider: () => {
     const state = get();
     return state.providers.find((p) => p.id === state.activeProviderId);
+  },
+
+  toggleSidebar: () => {
+    set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed }));
+    scheduleSave();
   },
 
   // ---- 持久化 ----
@@ -356,8 +437,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       const theme = (await s.get<ThemeMode>("theme")) || "system";
       const language = (await s.get<string>("language")) || "zh-CN";
       const shortcuts = (await s.get<ShortcutMap>("shortcuts")) || DEFAULT_SHORTCUTS;
-      const providers = (await s.get<ModelProvider[]>("providers")) || [];
+      let providers = (await s.get<ModelProvider[]>("providers")) || [];
+
+      // 解密 API Key（兼容旧明文数据）
+      providers = await Promise.all(
+        providers.map(async (p) => ({
+          ...p,
+          apiKey: await decryptApiKey(p.apiKey),
+        })),
+      );
       const activeProviderId = (await s.get<string | null>("activeProviderId")) || providers[0]?.id || null;
+      const sidebarCollapsed = (await s.get<boolean>("sidebarCollapsed")) || false;
+      const mcpServers = (await s.get<McpServerUI[]>("mcpServers")) || [];
+      const mcpSeeded = (await s.get<boolean>("mcpSeeded")) || false;
 
       // 迁移旧数据：如果有 apiKey/apiBase/model 但没 providers，自动创建默认 provider
       if (providers.length === 0) {
@@ -379,6 +471,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? conversations
           : [{ id: "default", title: "新对话", createdAt: new Date().toISOString() }];
 
+      // 首次启动时种子内置 Web + Tavily 工具服务器（之后用户删改均持久保留）
+      const seededMcp = mcpSeeded ? mcpServers : [DEFAULT_WEB_SERVER, DEFAULT_TAVILY_SERVER];
+
       set({
         conversations: finalConversations,
         activeConversationId: finalConversations[0].id,
@@ -388,11 +483,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         shortcuts,
         providers,
         activeProviderId,
+        sidebarCollapsed,
+        mcpServers: seededMcp,
+        mcpSeeded: true,
         ready: true,
       });
 
       applyTheme(theme);
-    } catch {
+      i18n.changeLanguage(language);
+    } catch (err) {
+      console.error(
+        "[persist] 加载配置失败:",
+        err instanceof Error ? err.message : err,
+      );
       set({ ready: true });
       applyTheme("system");
     }
@@ -402,20 +505,41 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const s = await getStore();
       const state = get();
+
+      // 加密 API Key 后再持久化
+      const safeProviders = await Promise.all(
+        state.providers.map(async (p) => ({
+          ...p,
+          apiKey: await encryptApiKey(p.apiKey),
+        })),
+      );
+
       await s.set("conversations", state.conversations);
       await s.set("messages", state.messages);
       await s.set("theme", state.theme);
       await s.set("language", state.language);
       await s.set("shortcuts", state.shortcuts);
-      await s.set("providers", state.providers);
+      await s.set("providers", safeProviders);
       await s.set("activeProviderId", state.activeProviderId);
+      await s.set("sidebarCollapsed", state.sidebarCollapsed);
+      await s.set("mcpServers", state.mcpServers);
+      await s.set("mcpSeeded", state.mcpSeeded);
       // 清理旧字段
       await s.delete("apiKey");
       await s.delete("apiBase");
       await s.delete("model");
       await s.save();
-    } catch {
-      // 忽略保存错误
+
+      // 成功后清零错误计数
+      if (state.persistErrorCount > 0) {
+        set({ persistErrorCount: 0 });
+      }
+    } catch (err) {
+      console.error(
+        "[persist] 保存失败:",
+        err instanceof Error ? err.message : err,
+      );
+      set({ persistErrorCount: get().persistErrorCount + 1 });
     }
   },
 }));

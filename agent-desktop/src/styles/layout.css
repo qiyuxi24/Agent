@@ -47,6 +47,12 @@
   color: var(--text-primary);
 }
 
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .sidebar-nav {
   padding: 8px;
   display: flex;
@@ -103,6 +109,7 @@
   align-items: center;
   border-radius: var(--radius-sm);
   transition: all 0.15s;
+  position: relative;
 }
 .conversation-item-wrapper:hover {
   background: rgba(128, 128, 128, 0.08);
@@ -136,25 +143,197 @@
   white-space: nowrap;
 }
 
-.conversation-delete {
+/* ===== 对话三点菜单 ===== */
+.conv-menu-container {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.conv-menu-btn {
   display: none;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: none;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 50%;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  margin-right: 4px;
+  margin-right: 2px;
 }
-.conversation-item-wrapper:hover .conversation-delete {
+.conversation-item-wrapper:hover .conv-menu-btn {
+  display: inline-flex;
+}
+.conv-menu-btn:hover,
+.conv-menu-btn.active {
+  color: var(--text-primary);
+  background: rgba(128, 128, 128, 0.15);
+}
+
+/* 下拉菜单（portal 渲染到 body，position:fixed 跟随按钮坐标） */
+.conv-menu-dropdown {
+  position: fixed;
+  transform: translateY(-50%);
+  min-width: 140px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  z-index: 1000;
+  padding: 4px;
+  animation: menuFadeIn 0.12s ease-out;
+}
+
+@keyframes menuFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) translateX(-6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0) scale(1);
+  }
+}
+
+.conv-menu-item {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+  transition: background 0.1s;
 }
-.conversation-delete:hover {
+.conv-menu-item:hover {
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--text-primary);
+}
+
+.conv-menu-item-danger {
   color: var(--danger);
+}
+.conv-menu-item-danger:hover {
   background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+}
+
+.conv-menu-divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border-color);
+}
+
+/* 置顶图标 */
+.conv-pin-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* ===== 侧边栏收起按钮 ===== */
+.sidebar-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.sidebar-toggle-btn:hover {
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--text-primary);
+}
+
+/* ===== 折叠状态 ===== */
+.sidebar.collapsed {
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-right: none;
+}
+
+/* 侧边栏折叠后，主内容区外露一个展开按钮 */
+.sidebar-expand-float {
+  position: fixed;
+  left: 8px;
+  top: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  transition: all 0.15s;
+}
+.sidebar-expand-float:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* ===== Error Boundary 降级 UI ===== */
+.app-error-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  background: var(--bg-primary);
+}
+
+.error-fallback-card {
+  text-align: center;
+  padding: 40px 48px;
+  border-radius: 12px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  max-width: 400px;
+}
+
+.error-fallback-card h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 8px;
+}
+
+.error-fallback-card p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0 0 24px;
+  line-height: 1.6;
+}
+
+.error-fallback-card .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.md-fallback {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.7;
 }

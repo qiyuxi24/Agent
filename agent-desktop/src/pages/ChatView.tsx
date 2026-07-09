@@ -1,7 +1,15 @@
-import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useTranslation } from "react-i18next";
 import { useAppStore } from "../stores/appStore";
 import type { Message } from "../stores/appStore";
 import MarkdownRenderer from "../components/MarkdownRenderer";
+import ErrorBoundary from "../components/ErrorBoundary";
+import { getErrorMessage, isAbortError } from "../lib/errors";
+import { parseSSEStream } from "../lib/sse";
+import { SendIcon, StopIcon, ModelIcon, ChevronDownIcon, CheckIcon, ArrowDownIcon, EmptyChatIcon } from "../components/Icons";
+
+// 稳定空数组引用，避免 Zustand selector 每次返回新引用导致无限重渲染
+const EMPTY_MESSAGES: Message[] = [];
 
 // 运行时检测是否在 Tauri 环境中
 function isTauriEnv(): boolean {
@@ -18,18 +26,59 @@ export interface ChatViewHandle {
   toggleModelPicker: () => void;
 }
 
-interface SSEDelta {
-  choices?: Array<{ delta?: { content?: string } }>;
+/** Markdown 渲染器 + Error Boundary：崩溃时自动降级为纯文本显示 */
+function SafeMarkdown({ content }: { content: string }) {
+  return (
+    <ErrorBoundary fallback={<p className="md-fallback">{content}</p>}>
+      <MarkdownRenderer content={content} />
+    </ErrorBoundary>
+  );
+}
+
+/** 工具调用步骤展示（连接 MCP 工具时显示 AI 调用的工具与结果） */
+function ToolSteps({
+  steps,
+}: {
+  steps: { name: string; args: string; status: "running" | "done"; result?: string }[];
+}) {
+  return (
+    <div className="tool-steps">
+      {steps.map((s, i) => (
+        <div key={i} className={`tool-step ${s.status}`}>
+          <span className="tool-step-icon">
+            {s.status === "running" ? "⏳" : "✅"}
+          </span>
+          <span className="tool-step-name">{s.name}</span>
+          {s.result && (
+            <span className="tool-step-result">{s.result.slice(0, 240)}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ conversationId }, ref) {
+  const { t } = useTranslation();
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const cancelledRef = useRef(false);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScroll = useRef(true);
+
+  // 工具调用步骤（MCP tool-call / tool-result 事件驱动，瞬时展示，不进 store）
+  const [toolSteps, setToolSteps] = useState<{
+    name: string;
+    args: string;
+    status: "running" | "done";
+    result?: string;
+  }[]>([]);
 
   // 暴露方法给父组件（快捷键用）
   useImperativeHandle(ref, () => ({
@@ -41,17 +90,19 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     },
   }));
 
-  const {
-    messages,
-    addMessage,
-    updateLastAssistantMessage,
-    providers,
-    activeProviderId,
-    setActiveProvider,
-    setActiveModel,
-  } = useAppStore();
+  // === 精准 Selector 订阅 ===
+  const currentMessages = useAppStore((s) =>
+    conversationId ? (s.messages[conversationId] || EMPTY_MESSAGES) : EMPTY_MESSAGES,
+  );
+  const providers = useAppStore((s) => s.providers);
+  const activeProviderId = useAppStore((s) => s.activeProviderId);
 
-  const currentMessages: Message[] = conversationId ? (messages[conversationId] || []) : [];
+  // Actions（稳定引用）
+  const addMessage = useAppStore((s) => s.addMessage);
+  const updateLastAssistantMessage = useAppStore((s) => s.updateLastAssistantMessage);
+  const setActiveProvider = useAppStore((s) => s.setActiveProvider);
+  const setActiveModel = useAppStore((s) => s.setActiveModel);
+
   const activeProvider = providers.find((p) => p.id === activeProviderId);
 
   // 关闭下拉菜单（点击外部）
@@ -65,24 +116,99 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  // === 滚动检测（防抖 80ms） ===
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const checkAtBottom = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => {
+      const atBottom = checkAtBottom();
+      shouldAutoScroll.current = atBottom;
+      setShowScrollToBottom(!atBottom && currentMessages.length > 0);
+    }, 80);
+  }, [checkAtBottom, currentMessages.length]);
+
+  // 挂载时滚到底部
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesContainerRef.current;
+    if (el && currentMessages.length > 0) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 内容变化时自动滚到底部（仅在用户未手动上滑时）
+  useEffect(() => {
+    if (shouldAutoScroll.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
+    }
   }, [currentMessages]);
 
+  // 停止流式时恢复自动滚动，隐藏按钮
+  useEffect(() => {
+    if (!isLoading) {
+      shouldAutoScroll.current = true;
+      setShowScrollToBottom(false);
+    }
+  }, [isLoading]);
+
+  // 手动滚到底部
+  const scrollToBottom = () => {
+    const el = messagesContainerRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+    shouldAutoScroll.current = true;
+    setShowScrollToBottom(false);
+  };
+
   // === Tauri 模式 ===
-  const handleSendViaTauri = async (conversationId: string, userMsg: Message) => {
+  const handleSendViaTauri = async (userMsg: Message) => {
     const { invoke } = await import("@tauri-apps/api/core");
     const { listen } = await import("@tauri-apps/api/event");
 
     let fullContent = "";
+    setToolSteps([]);
+
+    const unlistenTc = await listen<{ name: string; arguments: string }>(
+      "tool-call",
+      (event) => {
+        if (cancelledRef.current) return;
+        setToolSteps((prev) => [
+          ...prev,
+          { name: event.payload.name, args: event.payload.arguments, status: "running" },
+        ]);
+      },
+    );
+
+    const unlistenTr = await listen<{ name: string; result: string }>(
+      "tool-result",
+      (event) => {
+        if (cancelledRef.current) return;
+        setToolSteps((prev) =>
+          prev.map((s) =>
+            s.name === event.payload.name && s.status === "running"
+              ? { ...s, status: "done", result: event.payload.result }
+              : s,
+          ),
+        );
+      },
+    );
 
     const unlisten1 = await listen<{ token: string }>("stream-token", (event) => {
+      if (cancelledRef.current) return;
       fullContent += event.payload.token;
-      updateLastAssistantMessage(conversationId, fullContent);
+      updateLastAssistantMessage(conversationId!, fullContent);
     });
 
     const unlisten2 = await listen<{ error: string }>("stream-error", (event) => {
-      updateLastAssistantMessage(conversationId, `❌ ${event.payload.error}`);
+      if (cancelledRef.current) return;
+      updateLastAssistantMessage(conversationId!, `❌ ${event.payload.error}`);
       setIsLoading(false);
     });
 
@@ -105,10 +231,12 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     unlisten1();
     unlisten2();
     unlisten3();
+    unlistenTc();
+    unlistenTr();
   };
 
   // === 浏览器模式 ===
-  const handleSendViaFetch = async (conversationId: string, userMsg: Message) => {
+  const handleSendViaFetch = async (userMsg: Message) => {
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -137,51 +265,27 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
 
       if (!response.ok) {
         const body = await response.text().catch(() => "");
-        throw new Error(`API 错误 (${response.status}): ${body.slice(0, 200)}`);
+        throw new Error(`${t("chat.error.apiError")} (${response.status}): ${body.slice(0, 200)}`);
       }
 
       const reader = response.body?.getReader();
-      if (!reader) throw new Error("无法读取响应流");
+      if (!reader) throw new Error(t("chat.error.cannotReadStream"));
 
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        while (buffer.includes("\n")) {
-          const idx = buffer.indexOf("\n");
-          const line = buffer.slice(0, idx).trim();
-          buffer = buffer.slice(idx + 1);
-
-          if (!line || !line.startsWith("data: ")) continue;
-
-          const data = line.slice(6);
-          if (data === "[DONE]") {
-            setIsLoading(false);
-            return;
-          }
-
-          try {
-            const parsed: SSEDelta = JSON.parse(data);
-            const token = parsed.choices?.[0]?.delta?.content;
-            if (token) {
-              fullContent += token;
-              updateLastAssistantMessage(conversationId, fullContent);
-            }
-          } catch {
-            // 跳过
-          }
-        }
-      }
-    } catch (err: any) {
-      if (err.name === "AbortError") return;
+      await parseSSEStream(reader, {
+        onToken: (token) => {
+          fullContent += token;
+          updateLastAssistantMessage(conversationId!, fullContent);
+        },
+        onDone: () => {
+          setIsLoading(false);
+        },
+        signal: controller.signal,
+      });
+    } catch (err: unknown) {
+      if (isAbortError(err)) return;
       updateLastAssistantMessage(
-        conversationId,
-        `❌ 请求失败：${err instanceof Error ? err.message : String(err)}`
+        conversationId!,
+        `❌ ${t("chat.error.requestFailed")}：${getErrorMessage(err)}`
       );
     } finally {
       setIsLoading(false);
@@ -189,12 +293,30 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     }
   };
 
+  const handleStop = async () => {
+    cancelledRef.current = true;
+
+    if (isTauriEnv()) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("cancel_chat");
+      } catch { /* 忽略 */ }
+    } else {
+      abortRef.current?.abort();
+      abortRef.current = null;
+    }
+
+    setIsLoading(false);
+  };
+
   const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed || !conversationId || isLoading) return;
 
+    cancelledRef.current = false;
+
     if (!activeProvider?.apiKey) {
-      alert("请先在设置中配置 API Key");
+      alert(t("chat.needApiKey"));
       return;
     }
 
@@ -217,15 +339,17 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     addMessage(conversationId, assistantMsg);
 
     setIsLoading(true);
+    shouldAutoScroll.current = true;
+    setShowScrollToBottom(false);
 
     try {
       if (isTauriEnv()) {
-        await handleSendViaTauri(conversationId, userMsg);
+        await handleSendViaTauri(userMsg);
       } else {
-        await handleSendViaFetch(conversationId, userMsg);
+        await handleSendViaFetch(userMsg);
       }
-    } catch (err) {
-      const errorText = `❌ 请求失败：${err instanceof Error ? err.message : String(err)}`;
+    } catch (err: unknown) {
+      const errorText = `❌ ${t("chat.error.requestFailed")}：${getErrorMessage(err)}`;
       updateLastAssistantMessage(conversationId, errorText);
       setIsLoading(false);
     }
@@ -248,7 +372,7 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
   // 获取当前选中模型的显示文本
   const currentModelLabel = activeProvider
     ? `${activeProvider.name} / ${activeProvider.activeModel}`
-    : "未配置模型";
+    : t("chat.noModel");
 
   return (
     <div className="chat-view">
@@ -260,22 +384,16 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
             onClick={() => setShowModelPicker(!showModelPicker)}
             disabled={providers.length === 0}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 2L2 7l10 5 10-5-10-5z" />
-              <path d="M2 17l10 5 10-5" />
-              <path d="M2 12l10 5 10-5" />
-            </svg>
+            <ModelIcon size={14} />
             <span className="model-label">{currentModelLabel}</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
+            <ChevronDownIcon size={12} />
           </button>
 
           {showModelPicker && (
             <div className="model-dropdown">
               {providers.length === 0 ? (
                 <div className="model-dropdown-empty">
-                  暂无模型配置，请前往设置添加
+                  {t("chat.noModelHint")}
                 </div>
               ) : (
                 providers.map((provider) => (
@@ -295,9 +413,7 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
                         <span className="model-option-name">{model}</span>
                         {provider.id === activeProviderId &&
                           model === provider.activeModel && (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
+                            <CheckIcon size={14} />
                           )}
                       </button>
                     ))}
@@ -313,36 +429,54 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
       {currentMessages.length === 0 ? (
         <div className="chat-empty">
           <div className="empty-icon">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.3">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
+            <EmptyChatIcon size={64} />
           </div>
-          <h2>开始对话</h2>
-          <p>在下方输入消息，与 AI 助手交流</p>
+          <h2>{t("chat.empty.title")}</h2>
+          <p>{t("chat.empty.subtitle")}</p>
         </div>
       ) : (
-        <div className="chat-messages">
-          {currentMessages.map((msg) => (
-            <div key={msg.id} className={`message message-${msg.role}`}>
-              <div className="message-avatar">
-                {msg.role === "user" ? "👤" : "🤖"}
-              </div>
-              <div className="message-content">
-                <div className={`message-bubble ${msg.role === "assistant" ? "message-bubble-markdown" : ""}`}>
-                  {msg.role === "assistant" ? (
-                    msg.content ? (
-                      <MarkdownRenderer content={msg.content} />
-                    ) : isLoading ? (
-                      <span className="thinking-text">思考中...</span>
-                    ) : null
-                  ) : (
-                    msg.content
-                  )}
+        <div className="chat-messages-wrapper">
+          <div
+            className="chat-messages"
+            ref={messagesContainerRef}
+            onScroll={handleScroll}
+          >
+            {currentMessages.map((msg) => (
+              <div key={msg.id} className={`message message-${msg.role}`}>
+                <div className="message-avatar">
+                  {msg.role === "user" ? "👤" : "🤖"}
+                </div>
+                <div className="message-content">
+                  <div className={`message-bubble ${msg.role === "assistant" ? "message-bubble-markdown" : ""}`}>
+                    {msg.role === "assistant" ? (
+                      msg.content ? (
+                        <SafeMarkdown content={msg.content} />
+                      ) : isLoading ? (
+                        <span className="thinking-text">{t("chat.thinking")}</span>
+                      ) : null
+                    ) : (
+                      msg.content
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-          <div ref={messagesEndRef} />
+            ))}
+            {toolSteps.length > 0 && (
+              <div className="message message-tool-steps">
+                <ToolSteps steps={toolSteps} />
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* 滚动到底部按钮 */}
+          <button
+            className={`scroll-to-bottom-btn ${showScrollToBottom || isLoading ? "visible" : ""} ${isLoading ? "loading" : ""}`}
+            onClick={scrollToBottom}
+            title={t("chat.scrollToBottom")}
+          >
+            <ArrowDownIcon size={18} className="scroll-icon" />
+          </button>
         </div>
       )}
 
@@ -355,20 +489,27 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入消息... (Enter 发送，Shift+Enter 换行)"
+            placeholder={t("chat.input.placeholder")}
             rows={1}
             disabled={isLoading}
           />
-          <button
-            className="btn btn-send"
-            onClick={handleSend}
-            disabled={!input.trim() || isLoading}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-          </button>
+          {isLoading ? (
+            <button
+              className="btn btn-stop"
+              onClick={handleStop}
+              title={t("chat.stop")}
+            >
+              <StopIcon size={16} />
+            </button>
+          ) : (
+            <button
+              className="btn btn-send"
+              onClick={handleSend}
+              disabled={!input.trim()}
+            >
+              <SendIcon size={20} />
+            </button>
+          )}
         </div>
       </div>
     </div>

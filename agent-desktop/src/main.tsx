@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./i18n"; // 必须在 App 之前初始化
 import App from "./App";
 import "./styles/global.css";
 

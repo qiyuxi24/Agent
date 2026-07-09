@@ -1,0 +1,130 @@
+{
+  "app": {
+    "loading": "加载中..."
+  },
+
+  "errorBoundary": {
+    "title": "出错了",
+    "message": "应用遇到了一个错误，请尝试重试。",
+    "retry": "重试"
+  },
+
+  "sidebar": {
+    "appTitle": "Agent Desktop",
+    "newChat": "新建对话",
+    "emptyCantCreate": "当前对话为空，无法新建",
+    "chat": "对话",
+    "settings": "设置",
+    "history": "对话历史",
+    "moreOptions": "更多选项",
+    "pinChat": "置顶",
+    "unpinChat": "取消置顶",
+    "deleteChat": "删除对话",
+    "collapseSidebar": "收起侧边栏",
+    "expandSidebar": "展开侧边栏"
+  },
+
+  "chat": {
+    "empty": {
+      "title": "开始对话",
+      "subtitle": "在下方输入消息，与 AI 助手交流"
+    },
+    "input": {
+      "placeholder": "输入消息... (Enter 发送，Shift+Enter 换行)"
+    },
+    "thinking": "思考中...",
+    "stop": "停止生成",
+    "scrollToBottom": "滚动到底部",
+    "noModel": "未配置模型",
+    "noModelHint": "暂无模型配置，请前往设置添加",
+    "needApiKey": "请先在设置中配置 API Key",
+    "error": {
+      "requestFailed": "请求失败",
+      "apiError": "API 错误",
+      "cannotReadStream": "无法读取响应流"
+    }
+  },
+
+  "settings": {
+    "title": "设置",
+    "close": "返回对话",
+
+    "sections": {
+      "general": "通用",
+      "models": "AI 模型",
+      "shortcuts": "快捷键",
+      "tools": "工具 / MCP",
+      "plugins": "插件",
+      "about": "关于"
+    },
+
+    "general": {
+      "language": "语言",
+      "theme": "主题",
+      "themeSystem": "跟随系统",
+      "themeLight": "浅色",
+      "themeDark": "深色"
+    },
+
+    "models": {
+      "add": "添加",
+      "name": "名称",
+      "namePlaceholder": "例如：OpenAI、DeepSeek",
+      "apiBase": "API 地址",
+      "apiKey": "API Key",
+      "modelsLabel": "模型列表（逗号分隔）",
+      "modelsPlaceholder": "gpt-4o, gpt-4o-mini",
+      "modelsHint": "用英文逗号分隔多个模型名称",
+      "confirm": "确认添加",
+      "cancel": "取消",
+      "save": "保存",
+      "edit": "编辑",
+      "delete": "删除",
+      "empty": "尚未添加模型，点击上方「添加」按钮开始配置。",
+      "currentModels": "模型：",
+      "addModelPlaceholder": "添加模型...",
+      "removeModel": "移除 {{model}}"
+    },
+
+    "shortcuts": {
+      "recording": "按下快捷键...",
+      "clickToSet": "点击设置",
+      "resetDefault": "恢复默认",
+      "help": "点击快捷键 → 按下组合键 → 松开自动保存。最多支持 3 个键。按 Esc 取消。",
+      "actions": {
+        "newConversation": "新建对话",
+        "focusInput": "聚焦输入框",
+        "toggleModelPicker": "切换模型",
+        "openSettings": "打开设置"
+      }
+    },
+
+    "plugins": {
+      "comingSoon": "插件系统即将推出，敬请期待。"
+    },
+
+    "tools": {
+      "title": "工具 / MCP",
+      "desc": "连接 MCP 服务器，让 AI 在对话中调用外部工具（如文件操作、网页搜索）。工具由 LLM 通过 function calling 自动触发。",
+      "empty": "尚未添加任何 MCP 服务器，点击下方表单添加。",
+      "name": "名称",
+      "namePlaceholder": "例如：filesystem",
+      "command": "启动命令",
+      "args": "参数",
+      "argsHint": "用空格分隔多个参数，例如：-y @modelcontextprotocol/server-filesystem .",
+      "connect": "连接",
+      "disconnect": "断开",
+      "remove": "移除",
+      "connected": "已连接",
+      "offline": "未连接",
+      "needFields": "请填写名称和启动命令",
+      "availableTools": "可用工具",
+      "noTools": "暂无可用工具，请先连接一个 MCP 服务器。"
+    },
+
+    "about": {
+      "version": "Agent Desktop v0.1.0",
+      "tech": "基于 Tauri v2 + React + Rust 构建"
+    }
+  }
+}

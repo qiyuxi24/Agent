@@ -1,5 +1,9 @@
+mod mcp;
+
 use futures::StreamExt;
+use mcp::{McpManager, McpServerConfig};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
 use std::collections::HashMap;
@@ -16,9 +20,23 @@ pub struct ChatRequest {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub arguments: String,
+}
+
+/// 流式 token（普通文本增量）
 #[derive(Debug, Clone, Serialize)]
 pub struct StreamToken {
     pub token: String,
@@ -32,33 +50,168 @@ pub struct StreamError {
 #[derive(Debug, Clone, Serialize)]
 pub struct StreamDone;
 
+/// 工具调用开始事件（前端可渲染「正在调用 xxx」）
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolCallEvent {
+    pub name: String,
+    pub arguments: String,
+}
+
+/// 工具调用结果事件
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolResultEvent {
+    pub name: String,
+    pub result: String,
+}
+
+/// 把内部 ChatMessage 转为 OpenAI 接口需要的 JSON（精确控制字段，避免 null 陷阱）
+fn msg_to_value(m: &ChatMessage) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("role".to_string(), Value::String(m.role.clone()));
+    match &m.content {
+        Some(c) => map.insert("content".to_string(), Value::String(c.clone())),
+        None => map.insert("content".to_string(), Value::Null),
+    };
+    if let Some(tcs) = &m.tool_calls {
+        let arr: Vec<Value> = tcs
+            .iter()
+            .map(|tc| {
+                serde_json::json!({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": { "name": tc.name, "arguments": tc.arguments }
+                })
+            })
+            .collect();
+        map.insert("tool_calls".to_string(), Value::Array(arr));
+    }
+    if let Some(tid) = &m.tool_call_id {
+        map.insert("tool_call_id".to_string(), Value::String(tid.clone()));
+    }
+    Value::Object(map)
+}
+
+/// 累积流式工具调用（OpenAI 分片推送 tool_calls）
+#[derive(Default)]
+struct ToolCallAcc {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
 #[tauri::command]
 async fn chat_stream(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     request: ChatRequest,
 ) -> Result<(), String> {
-    let url = format!("{}/chat/completions", request.api_base.trim_end_matches('/'));
+    // 聚合所有已连接 MCP Server 的工具
+    let tools = state.mcp.llm_tools().await;
 
-    let client = reqwest::Client::new();
+    let mut messages = request.messages.clone();
+    let max_iterations = 10;
+
+    // 注册取消信号（供 cancel_chat 命令触发）
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
-
     {
         let mut streams = state.active_streams.lock().await;
         streams.insert("chat".to_string(), cancel_tx);
+    }
+
+    for _ in 0..max_iterations {
+        // 本轮调用 LLM（流式输出 + 捕获 tool_calls）
+        let (assistant_content, tool_calls) =
+            run_completion(&app, &request, &messages, &tools, &mut cancel_rx).await?;
+
+        // 把 assistant 消息加回上下文
+        messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: if assistant_content.is_empty() {
+                None
+            } else {
+                Some(assistant_content)
+            },
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls.clone())
+            },
+            tool_call_id: None,
+        });
+
+        // 没有工具调用 → 本轮即为最终回答
+        if tool_calls.is_empty() {
+            let _ = app.emit("stream-done", StreamDone);
+            cleanup(&app, &state).await;
+            return Ok(());
+        }
+
+        // 执行每个工具调用
+        for tc in &tool_calls {
+            let _ = app.emit(
+                "tool-call",
+                ToolCallEvent {
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                },
+            );
+
+            let res = state.mcp.call_namespaced(&tc.name, &tc.arguments).await;
+            let result_text = match res {
+                Ok(t) => t,
+                Err(e) => format!("工具调用失败: {}", e),
+            };
+
+            let _ = app.emit(
+                "tool-result",
+                ToolResultEvent {
+                    name: tc.name.clone(),
+                    result: result_text.clone(),
+                },
+            );
+
+            messages.push(ChatMessage {
+                role: "tool".to_string(),
+                content: Some(result_text),
+                tool_calls: None,
+                tool_call_id: Some(tc.id.clone()),
+            });
+        }
+    }
+
+    // 超出最大迭代，正常结束
+    let _ = app.emit("stream-done", StreamDone);
+    cleanup(&app, &state).await;
+    Ok(())
+}
+
+/// 调用一次 LLM 流式接口，实时推送文本 token，并收集 tool_calls
+async fn run_completion(
+    app: &AppHandle,
+    request: &ChatRequest,
+    messages: &[ChatMessage],
+    tools: &[Value],
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+) -> Result<(String, Vec<ToolCall>), String> {
+    let url = format!("{}/chat/completions", request.api_base.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+
+    let mut body = serde_json::json!({
+        "model": request.model,
+        "messages": messages.iter().map(msg_to_value).collect::<Vec<_>>(),
+        "stream": true,
+        "temperature": 0.7,
+        "max_tokens": 4096,
+    });
+    if !tools.is_empty() {
+        body["tools"] = Value::Array(tools.to_vec());
     }
 
     let response = client
         .post(&url)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", request.api_key))
-        .json(&serde_json::json!({
-            "model": request.model,
-            "messages": request.messages,
-            "stream": true,
-            "temperature": 0.7,
-            "max_tokens": 4096,
-        }))
+        .json(&body)
         .send()
         .await
         .map_err(|e| format!("网络请求失败: {}", e))?;
@@ -72,17 +225,14 @@ async fn chat_stream(
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
+    let mut content = String::new();
+    let mut tool_accs: Vec<ToolCallAcc> = Vec::new();
 
     loop {
-        // 用 select! 同时监听流数据和取消信号
         let next_chunk = tokio::select! {
             chunk = stream.next() => chunk,
             _ = cancel_rx.changed() => {
-                // 被取消
-                let _ = app.emit("stream-done", StreamDone);
-                let mut streams = state.active_streams.lock().await;
-                streams.remove("chat");
-                return Ok(());
+                return Ok((content, Vec::new()));
             }
         };
 
@@ -101,18 +251,39 @@ async fn chat_stream(
 
                     if let Some(data) = line.strip_prefix("data: ") {
                         if data == "[DONE]" {
-                            let _ = app.emit("stream-done", StreamDone);
-                            let mut streams = state.active_streams.lock().await;
-                            streams.remove("chat");
-                            return Ok(());
+                            return Ok((content, finalize_tool_calls(tool_accs)));
                         }
 
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                            if let Some(token) = parsed["choices"][0]["delta"]["content"].as_str() {
+                        if let Ok(parsed) = serde_json::from_str::<Value>(data) {
+                            let delta = &parsed["choices"][0]["delta"];
+                            if let Some(token) = delta["content"].as_str() {
                                 if !token.is_empty() {
-                                    let _ = app.emit("stream-token", StreamToken {
-                                        token: token.to_string(),
-                                    });
+                                    content.push_str(token);
+                                    let _ = app.emit(
+                                        "stream-token",
+                                        StreamToken {
+                                            token: token.to_string(),
+                                        },
+                                    );
+                                }
+                            }
+                            // 累积分片 tool_calls
+                            if let Some(tcs) = delta["tool_calls"].as_array() {
+                                for tc in tcs {
+                                    let index = tc["index"].as_u64().unwrap_or(0) as usize;
+                                    if index >= tool_accs.len() {
+                                        tool_accs.resize_with(index + 1, ToolCallAcc::default);
+                                    }
+                                    let acc = &mut tool_accs[index];
+                                    if let Some(id) = tc["id"].as_str() {
+                                        acc.id = id.to_string();
+                                    }
+                                    if let Some(name) = tc["function"]["name"].as_str() {
+                                        acc.name = name.to_string();
+                                    }
+                                    if let Some(args) = tc["function"]["arguments"].as_str() {
+                                        acc.arguments.push_str(args);
+                                    }
                                 }
                             }
                         }
@@ -120,19 +291,37 @@ async fn chat_stream(
                 }
             }
             Some(Err(e)) => {
-                let _ = app.emit("stream-error", StreamError {
-                    error: format!("流式读取错误: {}", e),
-                });
+                let _ = app.emit(
+                    "stream-error",
+                    StreamError {
+                        error: format!("流式读取错误: {}", e),
+                    },
+                );
                 break;
             }
             None => break,
         }
     }
 
+    Ok((content, finalize_tool_calls(tool_accs)))
+}
+
+/// 从累积器中产出最终的 ToolCall 列表（忽略没有名字的无效项）
+fn finalize_tool_calls(accs: Vec<ToolCallAcc>) -> Vec<ToolCall> {
+    accs.into_iter()
+        .filter(|a| !a.name.is_empty())
+        .map(|a| ToolCall {
+            id: a.id,
+            name: a.name,
+            arguments: a.arguments,
+        })
+        .collect()
+}
+
+async fn cleanup(app: &AppHandle, state: &tauri::State<'_, AppState>) {
     let _ = app.emit("stream-done", StreamDone);
     let mut streams = state.active_streams.lock().await;
     streams.remove("chat");
-    Ok(())
 }
 
 #[tauri::command]
@@ -144,8 +333,59 @@ async fn cancel_chat(state: tauri::State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+// ===================== MCP 管理命令 =====================
+
+#[tauri::command]
+async fn mcp_connect(
+    state: tauri::State<'_, AppState>,
+    config: McpServerConfig,
+) -> Result<usize, String> {
+    state.mcp.connect(config).await
+}
+
+#[tauri::command]
+async fn mcp_disconnect(
+    state: tauri::State<'_, AppState>,
+    name: String,
+) -> Result<(), String> {
+    state.mcp.disconnect(&name).await
+}
+
+#[tauri::command]
+async fn mcp_list_servers(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<mcp::McpServerInfo>, String> {
+    Ok(state.mcp.list_servers().await)
+}
+
+#[tauri::command]
+async fn mcp_list_tools(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<mcp::McpTool>, String> {
+    let servers = state.mcp.servers.lock().await;
+    let mut out = Vec::new();
+    for client in servers.values() {
+        for t in &client.tools {
+            out.push(t.clone());
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn mcp_call_tool(
+    state: tauri::State<'_, AppState>,
+    server: String,
+    tool: String,
+    args: String,
+) -> Result<String, String> {
+    let namespaced = format!("{}::{}", server, tool);
+    state.mcp.call_namespaced(&namespaced, &args).await
+}
+
 pub struct AppState {
     active_streams: Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>,
+    pub mcp: McpManager,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -208,8 +448,17 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(AppState {
             active_streams: Mutex::new(HashMap::new()),
+            mcp: McpManager::new(),
         })
-        .invoke_handler(tauri::generate_handler![chat_stream, cancel_chat])
+        .invoke_handler(tauri::generate_handler![
+            chat_stream,
+            cancel_chat,
+            mcp_connect,
+            mcp_disconnect,
+            mcp_list_servers,
+            mcp_list_tools,
+            mcp_call_tool
+        ])
         .setup(|app| {
             // 首次启动：自动创建应用数据目录
             // Tauri store 插件会把 store.json 存到这里

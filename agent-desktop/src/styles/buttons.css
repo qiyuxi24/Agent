@@ -29,6 +29,24 @@
   cursor: not-allowed;
 }
 
+.btn-stop {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.btn-stop:hover {
+  background: var(--accent-hover);
+}
+
 .btn-send {
   width: 36px;
   height: 36px;
