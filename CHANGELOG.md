@@ -10,16 +10,16 @@
 
 ### 新增
 
-- **内置浏览器**：侧边栏新增「浏览器」入口，支持完整网页浏览（9 files, +712/-9）
+- **内置浏览器**：基于 WebView2 原生内核的完整浏览器（6 files, +319/-237）
+  - **架构升级**：从 iframe 改为 Tauri WebviewBuilder 子 webview（与 Edge 同内核）
+  - Rust 侧：browser.rs 模块 + 9 个 Tauri commands（navigate/reload/back/forward/resize/destroy 等）
+  - 事件驱动：`browser-url-changed` 实时同步地址栏，`browser-page-loaded` 停止 loading
+  - 原生历史栈：前进后退走 WebView2 原生 history，无跨域限制
+  - ResizeObserver：窗口大小变化时自动调整 webview 位置/尺寸
+  - 生命周期管理：切换页面自动销毁 webview，回到浏览器自动重建
   - 地址栏：输入 URL 自动补全 https://，中文/空格自动转为 Google 搜索
-  - 导航控件：后退/前进（基于独立历史栈）、刷新、主页（Google）
-  - 加载状态：顶部渐变动画进度条 + 地址栏旋转加载图标
-  - 错误处理：iframe 加载失败时显示错误卡片 + 重试/外部打开按钮
-  - 状态栏：底部显示当前页面标题
   - 键盘快捷键：`Ctrl+L` 聚焦地址栏
-  - 安全沙箱：`sandbox="allow-scripts allow-same-origin allow-forms allow-popups"`
-  - 外部浏览器打开：工具栏右侧按钮一键在系统浏览器打开当前页面
-  - 国际化：完整中/英文翻译（17 个 key）
+  - 需要 `tauri` 的 `unstable` feature（multiwebview 支持）
 
 ### 新增
 

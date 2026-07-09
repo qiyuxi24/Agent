@@ -1,5 +1,8 @@
 import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   ArrowLeftIcon, ArrowRightIcon, RefreshIcon,
   HomeIcon, ExternalLinkIcon, GlobeIcon,
@@ -7,99 +10,150 @@ import {
 
 const DEFAULT_HOME = "https://www.google.com";
 
-/** 安全的 URL 补全：自动补全 https:// */
+/** URL 标准化：补全 https://，中文/空格 → Google 搜索 */
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return DEFAULT_HOME;
-  // 已经是完整协议
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  // 搜索查询（包含空格或中文字符）→ 跳转 Google 搜索
   if (/\s|[^\x00-\x7F]/.test(trimmed)) {
     return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
   }
-  // 域名形式 → 补全 https://
   if (trimmed.includes(".") && !trimmed.includes(" ")) {
     return `https://${trimmed}`;
   }
-  // 其他 → Google 搜索
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
 }
 
-interface NavEntry {
-  url: string;
-  title: string;
+/** 从 URL 提取标题（域名 + 首段路径） */
+function urlToTitle(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, "");
+    const path = u.pathname.replace(/\/$/, "").split("/").pop() || "";
+    return path ? `${host} › ${decodeURIComponent(path)}` : host;
+  } catch {
+    return url;
+  }
 }
 
 export default function BrowserPanel() {
   const { t } = useTranslation();
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const unlistenRef = useRef<UnlistenFn[]>([]);
+  const createdRef = useRef(false);
 
   const [currentUrl, setCurrentUrl] = useState(DEFAULT_HOME);
-  const [inputValue, setInputValue] = useState(DEFAULT_HOME);
-  const [history, setHistory] = useState<NavEntry[]>([{ url: DEFAULT_HOME, title: "Home" }]);
-  const [historyIndex, setHistoryIndex] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [inputValue, setInputValue] = useState("");
   const [pageTitle, setPageTitle] = useState("");
-  const [iframeBlocked] = useState(false);
-  const [loadError, setLoadError] = useState(false);
-  const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
+  // WebView2 历史栈通过 URL 变化次数推断
+  const historyStack = useRef<string[]>([]);
+  const historyPos = useRef(-1);
 
-  // 清理计时器
+  /** 计算内容区窗口坐标并创建/调整 webview */
+  const syncBounds = useCallback(() => {
+    if (!contentRef.current) return;
+    const rect = contentRef.current.getBoundingClientRect();
+    const x = rect.left;
+    const y = rect.top;
+    const w = rect.width;
+    const h = rect.height;
+
+    if (w <= 0 || h <= 0) return;
+
+    if (!createdRef.current) {
+      // 首次创建
+      createdRef.current = true;
+      invoke("browser_create", { url: currentUrl, x, y, w: Math.floor(w), h: Math.floor(h) })
+        .catch((e) => console.error("[Browser] 创建失败:", e));
+    } else {
+      invoke("browser_resize", { x, y, w: Math.floor(w), h: Math.floor(h) })
+        .catch(() => {}); // 静默失败
+    }
+  }, [currentUrl]);
+
+  /** 创建 + 监听事件 + ResizeObserver */
   useEffect(() => {
-    return () => {
-      if (loadTimer.current) clearTimeout(loadTimer.current);
+    let obs: ResizeObserver | null = null;
+
+    const setup = async () => {
+      // 监听 Tauri 事件
+      try {
+        const u1 = await listen<{ url: string }>("browser-url-changed", (event) => {
+          const url = event.payload.url;
+          setCurrentUrl(url);
+          setInputValue(url);
+          setPageTitle(urlToTitle(url));
+          setLoading(false);
+
+          // 更新历史栈
+          const stack = historyStack.current;
+          const pos = historyPos.current;
+          // 如果当前在历史中间位置，截断后续
+          if (pos < stack.length - 1) {
+            stack.splice(pos + 1);
+          }
+          // 避免连续重复
+          if (stack[stack.length - 1] !== url) {
+            stack.push(url);
+            historyPos.current = stack.length - 1;
+          }
+          setCanGoBack(historyPos.current > 0);
+          setCanGoForward(false);
+        });
+        const u2 = await listen<{ url: string }>("browser-page-loaded", (_event) => {
+          setLoading(false);
+        });
+        unlistenRef.current = [u1, u2];
+      } catch (e) {
+        console.error("[Browser] 事件监听失败:", e);
+      }
+
+      // ResizeObserver 跟踪内容区大小变化
+      if (contentRef.current) {
+        obs = new ResizeObserver(() => {
+          syncBounds();
+        });
+        obs.observe(contentRef.current);
+      }
+
+      // 首次创建
+      syncBounds();
     };
-  }, []);
+
+    // 延迟执行，确保 DOM 已渲染
+    const timer = setTimeout(setup, 100);
+
+    return () => {
+      clearTimeout(timer);
+      // 销毁 webview
+      invoke("browser_destroy").catch(() => {});
+      createdRef.current = false;
+      historyStack.current = [];
+      historyPos.current = -1;
+      // 取消事件监听
+      unlistenRef.current.forEach((fn) => fn());
+      unlistenRef.current = [];
+      // 断开 ResizeObserver
+      obs?.disconnect();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 导航到 URL */
-  const navigateTo = useCallback((url: string) => {
+  const navigateTo = useCallback(async (url: string) => {
     const normalized = normalizeUrl(url);
     setCurrentUrl(normalized);
     setInputValue(normalized);
     setLoading(true);
-    setLoadError(false);
-
-    // 追加历史记录
-    setHistory((prev) => {
-      const newHistory = prev.slice(0, historyIndex + 1);
-      // 避免连续重复
-      const last = newHistory[newHistory.length - 1];
-      if (last && last.url === normalized) return prev;
-      newHistory.push({ url: normalized, title: normalized });
-      return newHistory;
-    });
-    setHistoryIndex((prev) => prev + 1);
-  }, [historyIndex]);
-
-  /** iframe 加载完成 */
-  const handleIframeLoad = useCallback(() => {
-    setLoading(false);
-    setLoadError(false);
-    // 尝试获取 iframe 标题（同源情况下有效）
     try {
-      const iframe = iframeRef.current;
-      if (iframe?.contentDocument?.title) {
-        const title = iframe.contentDocument.title;
-        setPageTitle(title);
-        // 更新历史中的标题
-        setHistory((prev) => {
-          const updated = [...prev];
-          if (updated[historyIndex]) {
-            updated[historyIndex] = { ...updated[historyIndex], title };
-          }
-          return updated;
-        });
-      }
-    } catch {
-      // 跨域无法读取，忽略
+      await invoke("browser_navigate", { url: normalized });
+    } catch (e) {
+      console.error("[Browser] 导航失败:", e);
+      setLoading(false);
     }
-  }, [historyIndex]);
-
-  /** iframe 加载错误 */
-  const handleIframeError = useCallback(() => {
-    setLoading(false);
-    setLoadError(true);
   }, []);
 
   /** 地址栏回车 */
@@ -112,45 +166,37 @@ export default function BrowserPanel() {
 
   /** 后退 */
   const goBack = () => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
-      const entry = history[newIndex];
-      setHistoryIndex(newIndex);
-      setCurrentUrl(entry.url);
-      setInputValue(entry.url);
-      setLoading(true);
-      setLoadError(false);
+    setLoading(true);
+    invoke("browser_go_back").catch((e) => console.error("[Browser] 后退失败:", e));
+    // 手动更新历史位置
+    if (historyPos.current > 0) {
+      historyPos.current--;
+      setCanGoBack(historyPos.current > 0);
+      setCanGoForward(true);
     }
   };
 
   /** 前进 */
   const goForward = () => {
-    if (historyIndex < history.length - 1) {
-      const newIndex = historyIndex + 1;
-      const entry = history[newIndex];
-      setHistoryIndex(newIndex);
-      setCurrentUrl(entry.url);
-      setInputValue(entry.url);
-      setLoading(true);
-      setLoadError(false);
+    setLoading(true);
+    invoke("browser_go_forward").catch((e) => console.error("[Browser] 前进失败:", e));
+    // 手动更新历史位置
+    const stack = historyStack.current;
+    if (historyPos.current < stack.length - 1) {
+      historyPos.current++;
+      setCanGoForward(historyPos.current < stack.length - 1);
+      setCanGoBack(true);
     }
   };
 
   /** 刷新 */
   const reload = () => {
     setLoading(true);
-    setLoadError(false);
-    // 强制刷新 iframe
-    const iframe = iframeRef.current;
-    if (iframe) {
-      iframe.src = currentUrl;
-    }
+    invoke("browser_reload").catch((e) => console.error("[Browser] 刷新失败:", e));
   };
 
   /** 主页 */
-  const goHome = () => {
-    navigateTo(DEFAULT_HOME);
-  };
+  const goHome = () => navigateTo(DEFAULT_HOME);
 
   /** 外部浏览器打开 */
   const openExternally = () => {
@@ -170,9 +216,6 @@ export default function BrowserPanel() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
-
-  const canGoBack = historyIndex > 0;
-  const canGoForward = historyIndex < history.length - 1;
 
   return (
     <div className="browser-panel">
@@ -198,7 +241,6 @@ export default function BrowserPanel() {
           <button
             className="browser-nav-btn"
             onClick={reload}
-            disabled={loading}
             title={t("browser.reload")}
           >
             <RefreshIcon size={16} className={loading ? "spinning" : ""} />
@@ -216,8 +258,6 @@ export default function BrowserPanel() {
           <span className="browser-address-icon">
             {loading ? (
               <span className="browser-spinner" />
-            ) : loadError ? (
-              <span className="browser-error-dot" />
             ) : (
               <GlobeIcon size={14} />
             )}
@@ -243,67 +283,15 @@ export default function BrowserPanel() {
         </div>
       </div>
 
-      {/* 内容区 */}
-      <div className="browser-content">
-        {iframeBlocked ? (
-          <div className="browser-blocked">
-            <div className="browser-blocked-icon">
-              <GlobeIcon size={48} />
-            </div>
-            <h3>{t("browser.blockedTitle")}</h3>
-            <p>{t("browser.blockedMessage")}</p>
-            <div className="browser-blocked-actions">
-              <a
-                href={currentUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-primary"
-              >
-                <ExternalLinkIcon size={14} />
-                <span>{t("browser.openInBrowser")}</span>
-              </a>
-            </div>
+      {/* 内容区 — webview 将覆盖在此区域之上 */}
+      <div className="browser-content" ref={contentRef}>
+        {/* 加载指示器 */}
+        {loading && (
+          <div className="browser-loading-bar">
+            <div className="browser-loading-bar-inner" />
           </div>
-        ) : (
-          <>
-            {/* 加载指示器 */}
-            {loading && (
-              <div className="browser-loading-bar">
-                <div className="browser-loading-bar-inner" />
-              </div>
-            )}
-
-            {/* iframe */}
-            <iframe
-              ref={iframeRef}
-              className="browser-iframe"
-              src={currentUrl}
-              title={pageTitle || currentUrl}
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
-              onLoad={handleIframeLoad}
-              onError={handleIframeError}
-            />
-
-            {/* 错误提示 */}
-            {loadError && !loading && (
-              <div className="browser-error-overlay">
-                <div className="browser-error-card">
-                  <GlobeIcon size={32} />
-                  <p>{t("browser.loadError")}</p>
-                  <div className="browser-error-actions">
-                    <button className="btn btn-secondary" onClick={reload}>
-                      {t("browser.retry")}
-                    </button>
-                    <button className="btn btn-primary" onClick={openExternally}>
-                      <ExternalLinkIcon size={14} />
-                      <span>{t("browser.openExternally")}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
         )}
+        {/* 透明占位：webview 是通过 Tauri 原生层覆盖的，这里只是一个占位容器 */}
       </div>
 
       {/* 底部状态栏 */}

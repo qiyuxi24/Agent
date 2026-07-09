@@ -1,3 +1,4 @@
+mod browser;
 mod error_codes;
 mod mcp;
 
@@ -509,7 +510,17 @@ pub fn run() {
             mcp_disconnect,
             mcp_list_servers,
             mcp_list_tools,
-            mcp_call_tool
+            mcp_call_tool,
+            // 浏览器模块
+            browser::browser_create,
+            browser::browser_navigate,
+            browser::browser_get_url,
+            browser::browser_go_back,
+            browser::browser_go_forward,
+            browser::browser_reload,
+            browser::browser_stop,
+            browser::browser_resize,
+            browser::browser_destroy,
         ])
         .setup(|app| {
             // 首次启动：自动创建应用数据目录
