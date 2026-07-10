@@ -22,7 +22,8 @@
     "deleteChat": "删除对话",
     "collapseSidebar": "收起侧边栏",
     "expandSidebar": "展开侧边栏",
-    "browser": "浏览器"
+    "browser": "浏览器",
+    "ide": "IDE"
   },
 
   "chat": {

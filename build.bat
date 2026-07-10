@@ -32,10 +32,27 @@ if not exist "node_modules\" (
 echo.
 echo ========================================
 echo   Agent Desktop - Full Build
-echo   (Rust + Frontend)
+echo   (Rust + Frontend + Code Server)
 echo ========================================
 echo.
 
+:: 检查/下载 code-server（~212MB，随应用打包）
+set "CS_DIR=src-tauri\binaries\code-server\release"
+set "CS_ENTRY=%CS_DIR%\out\node\entry.js"
+if not exist "%CS_ENTRY%" (
+    echo [INFO] Code Server not found, downloading...
+    echo [INFO] This is a one-time download (~54MB compressed, ~212MB extracted)
+    node "..\scripts\download-code-server.mjs"
+    if %ERRORLEVEL% NEQ 0 (
+        echo [WARN] Code Server download failed. Please run manually:
+        echo        npm run download:code-server
+        echo [WARN] Continuing build without Code Server...
+    )
+) else (
+    echo [INFO] Code Server found at %CS_DIR%
+)
+
+echo.
 call npm run tauri build
 
 if %ERRORLEVEL% NEQ 0 (

@@ -129,6 +129,8 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
   const setActiveModel = useAppStore((s) => s.setActiveModel);
 
   const activeProvider = providers.find((p) => p.id === activeProviderId);
+  const chatMode = useAppStore((s) => s.chatMode);
+  const setChatMode = useAppStore((s) => s.setChatMode);
 
   // 关闭下拉菜单（点击外部）
   useEffect(() => {
@@ -256,6 +258,7 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
         api_base: activeProvider?.apiBase || "https://api.openai.com/v1",
         api_key: activeProvider?.apiKey || "",
         model: activeProvider?.activeModel || "gpt-4o",
+        mode: chatMode,
         messages: [...currentMessages, userMsg].map((m) => ({
           role: m.role,
           content: m.content,
@@ -378,7 +381,9 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     setShowScrollToBottom(false);
 
     try {
-      if (isTauriEnv()) {
+      // Agent 模式走 Tauri 后端（含 MCP 工具 + Skills + 工具循环）
+      // 聊天模式走纯 fetch（直连 /chat/completions，无工具调用）
+      if (isTauriEnv() && chatMode === "agent") {
         await handleSendViaTauri(userMsg);
       } else {
         await handleSendViaFetch(userMsg);
@@ -457,6 +462,26 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
               )}
             </div>
           )}
+        </div>
+
+        {/* 模式切换：聊天（纯对话）/ Agent（启用 MCP 工具循环） */}
+        <div className="mode-toggle" role="group" aria-label="对话模式">
+          <button
+            type="button"
+            className={`mode-btn ${chatMode === "chat" ? "active" : ""}`}
+            onClick={() => setChatMode("chat")}
+            disabled={!isTauriEnv()}
+          >
+            聊天
+          </button>
+          <button
+            type="button"
+            className={`mode-btn ${chatMode === "agent" ? "active" : ""}`}
+            onClick={() => setChatMode("agent")}
+            disabled={!isTauriEnv()}
+          >
+            Agent
+          </button>
         </div>
       </div>
 

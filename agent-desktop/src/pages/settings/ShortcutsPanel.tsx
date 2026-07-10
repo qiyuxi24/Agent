@@ -41,7 +41,6 @@ export default function ShortcutsPanel() {
 
   return (
     <section className="settings-panel">
-      <h3 className="panel-title">{t("settings.sections.shortcuts")}</h3>
       <div className="shortcut-list">
         {(Object.keys(shortcuts) as ShortcutAction[]).map((action) => {
           const binding = shortcuts[action];

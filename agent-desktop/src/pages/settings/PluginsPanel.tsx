@@ -9,23 +9,10 @@ import {
   FolderIcon,
   TrashIcon,
   CheckIcon,
-  XIcon,
+  RefreshIcon,
 } from "../../components/Icons";
 
 /* ===== 类型 ===== */
-
-interface PluginMeta {
-  id: string;
-  name: string;
-  version: string;
-  author: string;
-  description: string;
-  category: string;
-  /** 插件入口脚本路径 */
-  entry?: string;
-  /** 贡献点：panel / command / theme */
-  contributes?: string[];
-}
 
 interface InstalledPlugin {
   id: string;
@@ -36,68 +23,27 @@ interface InstalledPlugin {
   category: string;
   enabled: boolean;
   installedAt?: string;
+  entry?: string;
+  contributes?: string[];
+}
+
+/** 市场条目（从后端动态抓取） */
+interface PluginMarketEntry {
+  id: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  description_zh: string;
+  category: string;
+  stars: number;
+  source: string;
+  download_url?: string;
+  homepage?: string;
+  contributes: string[];
 }
 
 type PluginTab = "installed" | "market";
-
-/* ===== 内置推荐插件（后续对接真实 API） ===== */
-
-const MARKET_PLUGINS: PluginMeta[] = [
-  {
-    id: "theme-dark-pro",
-    name: "Dark Pro Theme",
-    version: "1.2.0",
-    author: "Agent Team",
-    description: "专业深色主题，优化代码高亮与对比度。",
-    category: "theme",
-    contributes: ["theme"],
-  },
-  {
-    id: "markdown-preview",
-    name: "Markdown Preview",
-    version: "0.8.1",
-    author: "Agent Team",
-    description: "侧边栏实时 Markdown 预览，支持 GFM 语法与 Mermaid 图表。",
-    category: "tool",
-    contributes: ["panel"],
-  },
-  {
-    id: "github-copilot-chat",
-    name: "GitHub Copilot Chat",
-    version: "1.0.0",
-    author: "GitHub",
-    description: "接入 GitHub Copilot 对话服务，作为备选 AI 后端。",
-    category: "integration",
-    contributes: ["command"],
-  },
-  {
-    id: "todo-panel",
-    name: "Todo Panel",
-    version: "0.5.0",
-    author: "Agent Team",
-    description: "内置任务管理面板，支持看板视图与 AI 自动拆解任务。",
-    category: "productivity",
-    contributes: ["panel"],
-  },
-  {
-    id: "chart-visualizer",
-    name: "Chart Visualizer",
-    version: "0.3.2",
-    author: "Agent Team",
-    description: "在对话中直接渲染 ECharts 图表，支持折线/柱状/饼图。",
-    category: "visualization",
-    contributes: ["panel"],
-  },
-  {
-    id: "obsidian-sync",
-    name: "Obsidian Sync",
-    version: "0.2.0",
-    author: "Community",
-    description: "双向同步 Obsidian 笔记库，对话内容自动归档为 Markdown。",
-    category: "integration",
-    contributes: ["command"],
-  },
-];
 
 /* ===== 组件 ===== */
 
@@ -106,6 +52,9 @@ export default function PluginsPanel() {
 
   const [tab, setTab] = useState<PluginTab>("installed");
   const [installed, setInstalled] = useState<InstalledPlugin[]>([]);
+  const [market, setMarket] = useState<PluginMarketEntry[]>([]);
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketError, setMarketError] = useState("");
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("all");
   const [installing, setInstalling] = useState<string | null>(null);
@@ -126,9 +75,30 @@ export default function PluginsPanel() {
     }
   };
 
+  /* ---- 加载市场数据 ---- */
+  const loadMarket = async () => {
+    try {
+      setMarketLoading(true);
+      setMarketError("");
+      const list: PluginMarketEntry[] = await invoke("plugin_market_list");
+      setMarket(list);
+    } catch (e: any) {
+      setMarketError(String(e));
+    } finally {
+      setMarketLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadInstalled();
   }, []);
+
+  // 切换到市场 Tab 时加载数据
+  useEffect(() => {
+    if (tab === "market" && market.length === 0 && !marketLoading) {
+      loadMarket();
+    }
+  }, [tab]);
 
   /* ---- 已安装 ID 集合 ---- */
   const installedIds = useMemo(() => new Set(installed.map((p) => p.id)), [installed]);
@@ -136,18 +106,28 @@ export default function PluginsPanel() {
   /* ---- 分类列表 ---- */
   const categories = useMemo(() => {
     const cats = new Set<string>();
-    [...installed, ...MARKET_PLUGINS].forEach((p) => cats.add(p.category));
+    installed.forEach((p) => cats.add(p.category));
+    market.forEach((p) => cats.add(p.category));
     return Array.from(cats);
-  }, [installed]);
+  }, [installed, market]);
 
   const catLabel = (cat: string) => t(`settings.plugins.categories.${cat}`, cat);
 
   /* ---- 安装 ---- */
-  const handleInstall = async (plugin: PluginMeta) => {
+  const handleInstall = async (entry: PluginMarketEntry) => {
     try {
-      setInstalling(plugin.id);
+      setInstalling(entry.id);
       setError("");
-      await invoke("plugins_install", { pluginId: plugin.id });
+      await invoke("plugins_install", {
+        pluginId: entry.id,
+        downloadUrl: entry.download_url ?? null,
+        pluginName: entry.name,
+        pluginVersion: entry.version,
+        pluginAuthor: entry.author,
+        pluginDescription: entry.description,
+        pluginCategory: entry.category,
+        pluginContributes: entry.contributes.length > 0 ? entry.contributes : null,
+      });
       await loadInstalled();
     } catch (e: any) {
       setError(String(e));
@@ -184,13 +164,16 @@ export default function PluginsPanel() {
 
   /* ---- 筛选 ---- */
   const filteredMarket = useMemo(() => {
-    return MARKET_PLUGINS.filter((p) => {
+    return market.filter((p) => {
       if (catFilter !== "all" && p.category !== catFilter) return false;
-      if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.description.toLowerCase().includes(search.toLowerCase()))
+      const s = search.toLowerCase();
+      if (s && !p.name.toLowerCase().includes(s) &&
+          !p.description.toLowerCase().includes(s) &&
+          !p.description_zh.toLowerCase().includes(s))
         return false;
       return true;
     });
-  }, [search, catFilter]);
+  }, [market, search, catFilter]);
 
   const filteredInstalled = useMemo(() => {
     return installed.filter((p) => {
@@ -200,6 +183,22 @@ export default function PluginsPanel() {
       return true;
     });
   }, [installed, search, catFilter]);
+
+  /* ---- 星标格式化 ---- */
+  const formatStars = (n: number): string => {
+    if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+    return String(n);
+  };
+
+  /* ---- 来源标识 ---- */
+  const sourceLabel = (source: string): string => {
+    switch (source) {
+      case "npm": return "npm";
+      case "github": return "GitHub";
+      case "builtin": return t("settings.plugins.builtin", "内置");
+      default: return source;
+    }
+  };
 
   /* ===== 渲染 ===== */
 
@@ -290,6 +289,9 @@ export default function PluginsPanel() {
                     <p className="skill-card-desc">{p.description}</p>
                     <div className="skill-card-meta">
                       <span>{t("settings.plugins.author")}: {p.author}</span>
+                      {p.contributes && p.contributes.length > 0 && (
+                        <span>贡献: {p.contributes.join(", ")}</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -318,12 +320,31 @@ export default function PluginsPanel() {
       {/* 市场列表 */}
       {tab === "market" && (
         <>
-          {filteredMarket.length === 0 && (
+          {/* 加载与错误状态 */}
+          {marketLoading && <div className="skills-loading">加载市场中...</div>}
+          {marketError && (
+            <div className="skills-error">
+              {t("settings.plugins.marketError", "市场加载失败")}: {marketError}
+              <button
+                className="btn btn-sm btn-outline"
+                style={{ marginLeft: 8 }}
+                onClick={loadMarket}
+              >
+                <RefreshIcon size={12} />
+                重试
+              </button>
+            </div>
+          )}
+
+          {!marketLoading && !marketError && filteredMarket.length === 0 && (
             <div className="skills-loading">{t("settings.plugins.noMarket")}</div>
           )}
+
           <div className="skills-list">
             {filteredMarket.map((p) => {
               const isInstalled = installedIds.has(p.id);
+              const displayName = useDisplayName(p);
+              const displayDesc = useDisplayDesc(p);
               return (
                 <div key={p.id} className={`skill-card market ${isInstalled ? "installed" : ""}`}>
                   <div className="skill-card-main">
@@ -332,9 +353,13 @@ export default function PluginsPanel() {
                     </div>
                     <div className="skill-card-info">
                       <div className="skill-card-head">
-                        <span className="skill-card-name">{p.name}</span>
+                        <span className="skill-card-name">{displayName}</span>
                         <span className="skill-card-version">v{p.version}</span>
                         <span className="skill-card-cat">{catLabel(p.category)}</span>
+                        {p.stars > 0 && (
+                          <span className="skill-stars">★ {formatStars(p.stars)}</span>
+                        )}
+                        <span className="skill-source-tag">{sourceLabel(p.source)}</span>
                         {isInstalled && (
                           <span className="skill-installed-badge">
                             <CheckIcon size={10} />
@@ -342,11 +367,22 @@ export default function PluginsPanel() {
                           </span>
                         )}
                       </div>
-                      <p className="skill-card-desc">{p.description}</p>
+                      <p className="skill-card-desc">{displayDesc}</p>
                       <div className="skill-card-meta">
                         <span>{t("settings.plugins.author")}: {p.author}</span>
                         {p.contributes && p.contributes.length > 0 && (
                           <span>贡献: {p.contributes.join(", ")}</span>
+                        )}
+                        {p.homepage && (
+                          <a
+                            href={p.homepage}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="skill-homepage-link"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            主页 ↗
+                          </a>
                         )}
                       </div>
                     </div>
@@ -390,38 +426,48 @@ export default function PluginsPanel() {
           border-radius: 9px;
           line-height: 1;
         }
-        .btn-sm {
-          padding: 4px 10px;
+        .skill-stars {
+          font-size: 11px;
+          color: #e3b341;
+          font-weight: 600;
+        }
+        .skill-source-tag {
+          font-size: 10px;
+          padding: 1px 6px;
+          border-radius: 8px;
+          background: var(--bg-tertiary);
+          color: var(--text-secondary);
+          text-transform: uppercase;
+        }
+        .skill-homepage-link {
           font-size: 12px;
-          border-radius: 6px;
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-        }
-        .btn-outline {
-          background: transparent;
-          border: 1px solid var(--border-color);
-          color: var(--text-primary);
-          cursor: pointer;
-        }
-        .btn-outline:hover {
-          border-color: var(--accent);
           color: var(--accent);
+          text-decoration: none;
         }
-        .btn-primary {
-          background: var(--accent);
-          border: 1px solid var(--accent);
-          color: #fff;
-          cursor: pointer;
-        }
-        .btn-primary:hover {
-          opacity: .85;
-        }
-        .btn-primary:disabled {
-          opacity: .5;
-          cursor: not-allowed;
+        .skill-homepage-link:hover {
+          text-decoration: underline;
         }
       `}</style>
     </div>
   );
+}
+
+/** 根据可用字段选择显示名称（npm 包名可能很长，优先用短名称） */
+function useDisplayName(entry: PluginMarketEntry): string {
+  // 如果 name 包含 @scope/，用短格式或 id
+  if (entry.name.startsWith("@") && entry.name.includes("/")) {
+    const short = entry.name.split("/").pop() || entry.name;
+    if (short.length > 25) return short.substring(0, 22) + "...";
+    return short;
+  }
+  if (entry.name.length > 30) return entry.name.substring(0, 27) + "...";
+  return entry.name;
+}
+
+/** 优先显示中文描述，回退到英文 */
+function useDisplayDesc(entry: PluginMarketEntry): string {
+  if (entry.description_zh && entry.description_zh.trim().length > 0) {
+    return entry.description_zh;
+  }
+  return entry.description;
 }

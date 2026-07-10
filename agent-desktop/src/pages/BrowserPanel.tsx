@@ -8,20 +8,20 @@ import {
   HomeIcon, ExternalLinkIcon, GlobeIcon,
 } from "../components/Icons";
 
-const DEFAULT_HOME = "https://www.google.com";
+const DEFAULT_HOME = "https://www.bing.com";
 
-/** URL 标准化：补全 https://，中文/空格 → Google 搜索 */
+/** URL 标准化：补全 https://，中文/空格 → Bing 搜索 */
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return DEFAULT_HOME;
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   if (/\s|[^\x00-\x7F]/.test(trimmed)) {
-    return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+    return `https://www.bing.com/search?q=${encodeURIComponent(trimmed)}`;
   }
   if (trimmed.includes(".") && !trimmed.includes(" ")) {
     return `https://${trimmed}`;
   }
-  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+  return `https://www.bing.com/search?q=${encodeURIComponent(trimmed)}`;
 }
 
 /** 从 URL 提取标题（域名 + 首段路径） */

@@ -101,6 +101,11 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
+}
+
+.mcp-section-header {
+  justify-content: flex-end;
 }
 
 .mcp-server-cmd {
@@ -355,4 +360,142 @@
   background: var(--accent-light);
   border-radius: 4px;
   display: inline-block;
+}
+
+/* --- 环境变量配置 --- */
+.mcp-env-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.mcp-env-key {
+  flex: 1;
+  min-width: 80px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.mcp-env-val {
+  flex: 2;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.mcp-env-eq {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: ui-monospace, monospace;
+  user-select: none;
+}
+
+/* --- 服务器环境变量展示 --- */
+.mcp-server-env {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.mcp-env-chip {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: rgba(128, 128, 255, .12);
+  color: #a0a0ff;
+  padding: 1px 6px;
+  border-radius: 4px;
+  cursor: default;
+}
+
+/* --- 错误计数徽章 --- */
+.mcp-error-count {
+  font-size: 10px;
+  background: rgba(255, 107, 107, .15);
+  color: #ff6b6b;
+  padding: 1px 6px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* --- 服务器错误消息 --- */
+.mcp-server-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 107, 107, .08);
+  border: 1px solid rgba(255, 107, 107, .2);
+  border-radius: 6px;
+  font-size: 11px;
+  color: #ff9999;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  line-height: 1.4;
+}
+
+/* --- 路径解析展示 --- */
+.mcp-server-resolved {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: .7;
+}
+
+/* --- stderr 日志查看器 --- */
+.mcp-stderr-log {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, .3);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.mcp-stderr-header {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.mcp-stderr-empty {
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+.mcp-stderr-line {
+  padding: 1px 0;
+  color: #a0c0a0;
+  line-height: 1.5;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.mcp-stderr-line + .mcp-stderr-line {
+  border-top: 1px solid rgba(255, 255, 255, .03);
+}
+
+/* --- 服务器卡片展开状态 --- */
+.mcp-server-card.expanded {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(79, 140, 255, .1);
 }

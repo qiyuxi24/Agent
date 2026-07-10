@@ -1,5 +1,7 @@
 mod browser;
+mod code_server;
 mod error_codes;
+mod ide;
 mod mcp;
 mod plugins;
 mod skills;
@@ -21,6 +23,14 @@ pub struct ChatRequest {
     pub api_key: String,
     pub model: String,
     pub messages: Vec<ChatMessage>,
+    /// 对话模式："agent" = 启用 MCP 工具循环；"chat" = 纯对话（无工具、无 skills 注入）
+    #[serde(default = "default_chat_mode")]
+    pub mode: String,
+}
+
+/// 默认模式：保持原有行为（agent）
+fn default_chat_mode() -> String {
+    "agent".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -120,11 +130,49 @@ async fn chat_stream(
     state: tauri::State<'_, AppState>,
     request: ChatRequest,
 ) -> Result<(), String> {
-    // 聚合所有已连接 MCP Server 的工具
-    let tools = state.mcp.llm_tools().await;
+    // 模式判断：agent = 启用 MCP 工具循环；chat = 纯对话
+    let agent_mode = request.mode == "agent";
 
+    // 仅 agent 模式聚合 MCP 工具；chat 模式传空，run_completion 会自动不加 tools
+    let tools = if agent_mode {
+        state.mcp.llm_tools().await
+    } else {
+        Vec::new()
+    };
+
+    // 注入已启用的 Skills 作为 system prompt（仅 agent 模式）
+    let skills_prompt = if agent_mode {
+        skills::get_active_system_prompt(&app)
+    } else {
+        String::new()
+    };
     let mut messages = request.messages.clone();
-    let max_iterations = 10;
+    if !skills_prompt.is_empty() {
+        let prompt_len = skills_prompt.len();
+        // 检查是否已有 system 消息，有则替换，无则插入
+        if let Some(first) = messages.first_mut() {
+            if first.role == "system" {
+                let existing = first.content.clone().unwrap_or_default();
+                first.content = Some(format!("{skills_prompt}\n\n{existing}"));
+            } else {
+                messages.insert(0, ChatMessage {
+                    role: "system".to_string(),
+                    content: Some(skills_prompt),
+                    tool_calls: None,
+                    tool_call_id: None,
+                });
+            }
+        } else {
+            messages.insert(0, ChatMessage {
+                role: "system".to_string(),
+                content: Some(skills_prompt),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+        eprintln!("[chat_stream] 已注入 {} 字节的 Skills system prompt", prompt_len);
+    }
+    let max_iterations = if agent_mode { 10 } else { 1 };
 
     // 注册取消信号（供 cancel_chat 命令触发）
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
@@ -154,6 +202,13 @@ async fn chat_stream(
             tool_call_id: None,
         });
 
+        // 聊天模式：不执行工具，本轮回复即最终答案（即使模型返回了 tool_calls 也忽略）
+        if !agent_mode {
+            let _ = app.emit("stream-done", StreamDone);
+            cleanup(&app, &state).await;
+            return Ok(());
+        }
+
         // 没有工具调用 → 本轮即为最终回答
         if tool_calls.is_empty() {
             let _ = app.emit("stream-done", StreamDone);
@@ -162,6 +217,7 @@ async fn chat_stream(
         }
 
         // 执行每个工具调用（带超时和错误码）
+        // 注意：单个工具失败不会阻断整个对话，错误结果作为 tool message 传给 LLM
         for tc in &tool_calls {
             let _ = app.emit(
                 "tool-call",
@@ -185,9 +241,9 @@ async fn chat_stream(
                     } else {
                         "none"
                     };
-                    // 包含耗时信息帮助前端诊断
+                    // 包含耗时和具体错误信息帮助前端/LLM 诊断
                     let msg = format!(
-                        "{} (耗时 {:.1}s)",
+                        "[MCP错误] {} (耗时 {:.1}s)",
                         e.message,
                         elapsed.as_secs_f64()
                     );
@@ -220,11 +276,12 @@ async fn chat_stream(
                 tool_call_id: Some(tc.id.clone()),
             });
 
-            // 如果工具调用导致进程退出（MCP-002），通知前端
+            // 进程已崩溃/断开：不再继续调用同一服务器上的其余工具
+            // 但错误结果已传给 LLM，LLM 可以决定如何处理
             if let Some(ref code) = error_code {
                 if code == "MCP-002" || code == "MCP-004" {
-                    eprintln!("[chat_stream] MCP 服务器断开，中止后续工具调用");
-                    break;
+                    eprintln!("[chat_stream] MCP 服务器断开，跳过该服务器的后续工具调用");
+                    // 不 break，让 LLM 看到错误结果后自行适应
                 }
             }
         }
@@ -438,6 +495,43 @@ async fn mcp_call_tool(
         .map_err(|e| e.to_string())
 }
 
+/// 获取指定 MCP 服务器的 stderr 日志（最近 50 行）
+#[tauri::command]
+async fn mcp_server_stderr(
+    state: tauri::State<'_, AppState>,
+    name: String,
+) -> Result<Vec<String>, String> {
+    Ok(state.mcp.get_stderr(&name).await)
+}
+
+/// 重连指定的 MCP 服务器（使用之前保存的配置）
+#[tauri::command]
+async fn mcp_reconnect(
+    state: tauri::State<'_, AppState>,
+    name: String,
+) -> Result<usize, String> {
+    state.mcp.reconnect(&name).await.map_err(|e| e.to_string())
+}
+
+/// 执行 MCP 服务器健康检查，返回已断开的服务器名称列表
+/// auto_reconnect: 是否自动重连已断开的服务器
+#[tauri::command]
+async fn mcp_health_check(
+    state: tauri::State<'_, AppState>,
+    auto_reconnect: Option<bool>,
+) -> Result<Vec<String>, String> {
+    Ok(state.mcp.health_check(auto_reconnect.unwrap_or(false)).await)
+}
+
+/// 清空 MCP 工具调用缓存
+#[tauri::command]
+async fn mcp_clear_cache(
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state.mcp.clear_cache().await;
+    Ok(())
+}
+
 pub struct AppState {
     active_streams: Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>,
     pub mcp: McpManager,
@@ -445,60 +539,7 @@ pub struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 非开发模式：从 exe 旁边的 dist/ 文件夹加载前端
-    // 这样改前端只需要 npm run build，完全不需要重编译 Rust
-    #[cfg(not(dev))]
-    let builder = {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_default();
-        let dist_dir = exe_dir.join("dist");
-        println!("[Agent] Loading frontend from: {:?}", dist_dir);
-
-        tauri::Builder::default()
-            .register_uri_scheme_protocol("agentui", move |_ctx, request| {
-                let path = request.uri().path().trim_start_matches('/');
-                let file_path = if path.is_empty() { "index.html" } else { path };
-                let full_path = dist_dir.join(file_path);
-
-                match std::fs::read(&full_path) {
-                    Ok(data) => {
-                        let mime = mime_guess::from_path(&full_path)
-                            .first_or_octet_stream()
-                            .essence_str()
-                            .to_string();
-                        http::Response::builder()
-                            .header("Content-Type", mime)
-                            .header("Access-Control-Allow-Origin", "*")
-                            .body(data)
-                            .unwrap()
-                    }
-                    Err(_) => {
-                        // SPA fallback: 所有路由返回 index.html
-                        let index = dist_dir.join("index.html");
-                        if let Ok(data) = std::fs::read(&index) {
-                            http::Response::builder()
-                                .header("Content-Type", "text/html")
-                                .header("Access-Control-Allow-Origin", "*")
-                                .body(data)
-                                .unwrap()
-                        } else {
-                            http::Response::builder()
-                                .status(404)
-                                .header("Content-Type", "text/plain")
-                                .body(b"Not Found".to_vec())
-                                .unwrap()
-                        }
-                    }
-                }
-            })
-    };
-
-    #[cfg(dev)]
-    let builder = tauri::Builder::default();
-
-    builder
+    tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(AppState {
@@ -513,6 +554,11 @@ pub fn run() {
             mcp_list_servers,
             mcp_list_tools,
             mcp_call_tool,
+            mcp_server_stderr,
+            mcp_health_check,
+            mcp_reconnect,
+            mcp_clear_cache,
+            mcp::mcp_market_list,
             // 浏览器模块
             browser::browser_create,
             browser::browser_navigate,
@@ -531,15 +577,39 @@ pub fn run() {
             skills::skills_delete,
             skills::skills_read_content,
             skills::skills_clawhub_install,
+            skills::skills_preview_prompt,
             // 插件管理
             plugins::plugins_list,
             plugins::plugins_install,
             plugins::plugins_delete,
             plugins::plugins_toggle,
+            plugins::plugin_market_list,
+            // IDE / 编译器内核
+            ide::ide_execute_code,
+            ide::ide_get_languages,
+            ide::ide_read_file,
+            ide::ide_write_file,
+            ide::ide_create_file,
+            ide::ide_delete_file,
+            ide::ide_rename_file,
+            ide::ide_move_file,
+            ide::ide_list_dir,
+            ide::ide_search_files,
+            ide::ide_get_file_info,
+            ide::ide_get_workspace,
+            ide::ide_set_workspace,
+            ide::ide_terminal_exec,
+            // Code Server (VS Code IDE 内核)
+            code_server::code_server_is_installed,
+            code_server::code_server_install,
+            code_server::code_server_start,
+            code_server::code_server_stop,
+            code_server::code_server_status,
+            code_server::code_server_open_ide_window,
+            code_server::code_server_read_logs,
         ])
         .setup(|app| {
             // 首次启动：自动创建应用数据目录
-            // Tauri store 插件会把 store.json 存到这里
             let app_data = app.path().app_data_dir().unwrap_or_else(|_| {
                 std::env::current_exe()
                     .ok()
@@ -554,14 +624,11 @@ pub fn run() {
                 println!("[Agent] 已创建数据目录: {:?}", app_data);
             }
 
-            // 非开发模式：导航到自定义协议加载前端
-            #[cfg(not(dev))]
-            {
-                use tauri::Manager;
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.navigate(tauri::Url::parse("https://agentui.localhost/index.html").unwrap());
-                }
-            }
+            // 后台启动 Code Server（热备，应用打开时 IDE 秒开）
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                code_server::start_background(&app_handle).await;
+            });
 
             #[cfg(dev)]
             {

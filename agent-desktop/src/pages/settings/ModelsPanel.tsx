@@ -59,12 +59,13 @@ export default function ModelsPanel() {
 
   return (
     <section className="settings-panel">
-      <div className="section-header">
-        <h3 className="panel-title">{t("settings.sections.models")}</h3>
-        <button className="btn btn-add-provider" onClick={() => setShowAddForm(!showAddForm)}>
-          <PlusIcon size={14} />
-          {t("settings.models.add")}
-        </button>
+      <div className="section-header models-section-header">
+        <div className="section-header-actions">
+          <button className="btn btn-add-provider" onClick={() => setShowAddForm(!showAddForm)}>
+            <PlusIcon size={14} />
+            {t("settings.models.add")}
+          </button>
+        </div>
       </div>
 
       {showAddForm && (

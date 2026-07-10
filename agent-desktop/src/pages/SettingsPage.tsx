@@ -11,7 +11,6 @@ import {
   SettingsIcon,
   MonitorIcon,
   KeyboardIcon,
-  ModelIcon,
   ToolIcon,
   HelpIcon,
   CloseIcon,

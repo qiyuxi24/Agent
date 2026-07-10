@@ -21,7 +21,6 @@ export default function GeneralPanel() {
 
   return (
     <section className="settings-panel">
-      <h3 className="panel-title">{t("settings.sections.general")}</h3>
       <div className="form-group">
         <label>{t("settings.general.language")}</label>
         <select value={language} onChange={(e) => setLanguage(e.target.value)} className="form-select">

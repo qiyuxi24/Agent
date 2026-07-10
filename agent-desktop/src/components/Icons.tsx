@@ -61,6 +61,14 @@ export function StopIcon({ size = 16, className }: IconProps) {
   );
 }
 
+export function SquareIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none">
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+    </svg>
+  );
+}
+
 export function DotsIcon({ size = 14, className }: IconProps) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
@@ -399,6 +407,35 @@ export function ExtensionIcon({ size = 16, className }: IconProps) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M18.5 8.5h-3.8a1 1 0 0 1-.97-.76A2.5 2.5 0 0 0 9 6a2.5 2.5 0 0 0-4.73 1.74 1 1 0 0 1-.97.76H.5L0 11l2.8 2.5H6.6a1 1 0 0 1 .97.76A2.5 2.5 0 0 0 12 16a2.5 2.5 0 0 0 4.43-1.74 1 1 0 0 1 .97-.76H21.2L24 11l-2.8-2.5z" transform="translate(0 3) scale(.9)" />
+    </svg>
+  );
+}
+
+/* ===== MCP 诊断图标 ===== */
+
+/** 小虫 — 调试/日志 */
+export function BugIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 2l1.88 1.88" />
+      <path d="M14.12 3.88L16 2" />
+      <path d="M9 7.13v-1a3.003 3.003 0 0 1 5.16-1.63" />
+      <path d="M20 9a6 6 0 0 1-6 6H10a6 6 0 0 1-6-6V8" />
+      <path d="M4 20h4" />
+      <path d="M16 20h4" />
+      <path d="M14.5 14l-2.5 8" />
+      <path d="M9.5 14l2.5 8" />
+    </svg>
+  );
+}
+
+/** 警告三角 — 错误提示 */
+export function ErrorIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
     </svg>
   );
 }

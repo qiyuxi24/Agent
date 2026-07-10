@@ -239,6 +239,68 @@ fn dir_size(path: &std::path::Path) -> u64 {
     total
 }
 
+// ===================== 对话注入 =====================
+
+/// 获取所有已启用 Skill 的合并 system prompt（供 chat_stream 注入）
+/// 返回的是纯文本，可直接作为 system message 的 content
+pub fn get_active_system_prompt(app: &AppHandle) -> String {
+    let dir = skills_dir(app);
+    if !dir.exists() {
+        return String::new();
+    }
+
+    let mut prompts: Vec<String> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            // 跳过被禁用的
+            if path.join(".disabled").exists() {
+                continue;
+            }
+            let skill_md = path.join("SKILL.md");
+            if !skill_md.exists() {
+                continue;
+            }
+            let content = match fs::read_to_string(&skill_md) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            // 去掉 YAML frontmatter，只保留正文内容
+            let body = strip_frontmatter(&content);
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+            if !body.trim().is_empty() {
+                prompts.push(format!(
+                    "## Skill: {name}\n{body}"
+                ));
+            }
+        }
+    }
+
+    if prompts.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "以下是启用的技能（Skills），请在对话中遵循这些技能的指导：\n\n{}",
+        prompts.join("\n\n---\n\n")
+    )
+}
+
+/// 去掉 SKILL.md 的 YAML frontmatter（--- ... ---）
+fn strip_frontmatter(content: &str) -> String {
+    let content = content.trim();
+    if let Some(rest) = content.strip_prefix("---") {
+        if let Some((_fm, body)) = rest.split_once("---") {
+            return body.trim().to_string();
+        }
+    }
+    // 没有 frontmatter，直接返回全部内容
+    content.to_string()
+}
+
 // ===================== Tauri 命令 =====================
 
 /// 列出本地已安装的所有 Skills
@@ -289,7 +351,7 @@ pub fn skills_toggle(app: AppHandle, id: String, enabled: bool) -> Result<(), St
     Ok(())
 }
 
-/// 获取 Skills 市场列表（优先 ClawHub API，合并本地 market.json 作为补充）
+/// 获取 Skills 市场列表（优先 ClawHub API → GitHub 搜索 → 本地 market.json）
 #[tauri::command]
 pub async fn skills_market_list() -> Result<Vec<SkillMarketEntry>, String> {
     let mut entries: Vec<SkillMarketEntry> = Vec::new();
@@ -320,7 +382,28 @@ pub async fn skills_market_list() -> Result<Vec<SkillMarketEntry>, String> {
         }
     }
 
-    // 2. 合并本地 market.json（补充 ClawHub 中没有的技能）
+    // 2. GitHub 搜索补充（topic:codebuddy-skill + topic:claude-skill）
+    match fetch_github_skills().await {
+        Ok(github_skills) => {
+            let existing_ids: HashSet<String> = entries.iter().map(|e| e.id.clone()).collect();
+            let mut added = 0;
+            for skill in github_skills {
+                if !existing_ids.contains(&skill.id) {
+                    entries.push(skill);
+                    added += 1;
+                }
+            }
+            if added > 0 {
+                has_clawhub = true; // 有在线数据
+                eprintln!("[skills] GitHub: {} 个新技能", added);
+            }
+        }
+        Err(e) => {
+            eprintln!("[skills] GitHub 搜索失败: {}", e);
+        }
+    }
+
+    // 3. 合并本地 market.json（补充在线源中没有的技能）
     let local = if has_clawhub {
         match fetch_local_market().await {
             Ok(local_entries) => {
@@ -407,6 +490,83 @@ fn infer_category(slug: &str, topics: &[String]) -> String {
     } else {
         "general".into()
     }
+}
+
+/// 从 GitHub 搜索 Skills（topic:codebuddy-skill + topic:claude-skill）
+async fn fetch_github_skills() -> Result<Vec<SkillMarketEntry>, String> {
+    let urls = [
+        "https://api.github.com/search/repositories?q=topic:codebuddy-skill&sort=stars&per_page=20",
+        "https://api.github.com/search/repositories?q=topic:claude-skill&sort=stars&per_page=20",
+    ];
+
+    let mut entries: Vec<SkillMarketEntry> = Vec::new();
+    let client = reqwest::Client::builder()
+        .user_agent("agent-desktop/0.3.0")
+        .default_headers({
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert(reqwest::header::ACCEPT, reqwest::header::HeaderValue::from_static("application/vnd.github.v3+json"));
+            h
+        })
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?;
+
+    for url in &urls {
+        let resp = client.get(*url).send().await.map_err(|e| e.to_string())?;
+        if resp.status() == 403 {
+            eprintln!("[skills] GitHub API 限流");
+            continue;
+        }
+        if !resp.status().is_success() {
+            continue;
+        }
+        #[derive(Debug, Deserialize)]
+        struct GitHubSearchResponse {
+            items: Vec<GitHubSkillRepo>,
+        }
+        #[derive(Debug, Deserialize)]
+        struct GitHubSkillRepo {
+            full_name: String,
+            description: Option<String>,
+            stargazers_count: u64,
+            #[allow(dead_code)]
+            html_url: String,
+            #[allow(dead_code)]
+            topics: Option<Vec<String>>,
+        }
+
+        match resp.json::<GitHubSearchResponse>().await {
+            Ok(data) => {
+                for repo in data.items {
+                    let id = repo.full_name.replace('/', "-");
+                    let name = repo.full_name.clone();
+                    let desc = repo.description.clone().unwrap_or_default();
+                    let raw_base = format!(
+                        "https://raw.githubusercontent.com/{}/main",
+                        repo.full_name
+                    );
+                    entries.push(SkillMarketEntry {
+                        id,
+                        name,
+                        description_zh: String::new(),
+                        description_en: desc,
+                        version: "0.1.0".into(),
+                        category: "general".into(),
+                        download_url: raw_base,
+                        size_bytes: 0,
+                        installed: false,
+                        source: "github".into(),
+                        downloads: 0,
+                        stars: repo.stargazers_count,
+                        external_install: false,
+                    });
+                }
+            }
+            Err(e) => eprintln!("[skills] GitHub 解析失败: {}", e),
+        }
+    }
+
+    Ok(entries)
 }
 
 /// 从远程 GitHub 获取本地 market.json
@@ -526,6 +686,12 @@ pub fn skills_delete(app: AppHandle, id: String) -> Result<(), String> {
 
     fs::remove_dir_all(&dir).map_err(|e| format!("删除失败: {}", e))?;
     Ok(())
+}
+
+/// 预览当前所有已启用 Skill 会注入的 system prompt（调试用）
+#[tauri::command]
+pub fn skills_preview_prompt(app: AppHandle) -> Result<String, String> {
+    Ok(get_active_system_prompt(&app))
 }
 
 /// 打开 SKILL.md 文件（返回内容供前端预览）

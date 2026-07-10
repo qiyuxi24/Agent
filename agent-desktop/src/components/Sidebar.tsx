@@ -5,12 +5,12 @@ import { useAppStore } from "../stores/appStore";
 import {
   PlusIcon, ChatIcon, SettingsIcon, DotsIcon,
   PinIcon, PinFilledIcon, DeleteIcon,
-  PanelLeftCloseIcon, GlobeIcon,
+  PanelLeftCloseIcon, GlobeIcon, CodeIcon,
 } from "./Icons";
 
 interface SidebarProps {
-  currentPage: "chat" | "settings" | "browser";
-  onNavigate: (page: "chat" | "settings" | "browser") => void;
+  currentPage: "chat" | "settings" | "browser" | "ide";
+  onNavigate: (page: "chat" | "settings" | "browser" | "ide") => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }
@@ -124,6 +124,13 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggleCo
           >
             <ChatIcon size={18} />
             <span>{t("sidebar.chat")}</span>
+          </button>
+          <button
+            className={`nav-item ${currentPage === "ide" ? "active" : ""}`}
+            onClick={() => onNavigate("ide")}
+          >
+            <CodeIcon size={18} />
+            <span>{t("sidebar.ide")}</span>
           </button>
           <button
             className={`nav-item ${currentPage === "browser" ? "active" : ""}`}

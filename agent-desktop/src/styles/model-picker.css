@@ -101,3 +101,37 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ===== 对话模式切换（聊天 / Agent） ===== */
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+}
+.mode-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.mode-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+.mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.mode-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

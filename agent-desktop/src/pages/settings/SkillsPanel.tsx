@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  PackageIcon, DownloadIcon, DeleteIcon, CodeIcon,
+  PackageIcon, DownloadIcon, DeleteIcon,
   StoreIcon, SearchIcon, EyeIcon, ToggleLeftIcon,
   ToggleRightIcon, SparklesIcon, RefreshIcon, CheckIcon,
 } from "../../components/Icons";
@@ -58,6 +58,8 @@ export default function SkillsPanel() {
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState("");
+  const [showPromptPreview, setShowPromptPreview] = useState(false);
+  const [promptPreviewContent, setPromptPreviewContent] = useState("");
 
   // 加载已安装列表
   const loadInstalled = useCallback(async () => {
@@ -110,6 +112,28 @@ export default function SkillsPanel() {
       );
     } catch (e) {
       console.error("[skills] 切换失败:", e);
+    }
+  };
+
+  // 预览注入的 system prompt
+  const previewPrompt = async () => {
+    if (showPromptPreview) {
+      setShowPromptPreview(false);
+      setPromptPreviewContent("");
+      return;
+    }
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const content = await invoke<string>("skills_preview_prompt");
+      if (!content) {
+        setPromptPreviewContent("（暂无启用的 Skill）");
+      } else {
+        setPromptPreviewContent(content);
+      }
+      setShowPromptPreview(true);
+    } catch (e) {
+      setPromptPreviewContent("无法加载: " + (typeof e === "string" ? e : ""));
+      setShowPromptPreview(true);
     }
   };
 
@@ -239,9 +263,9 @@ export default function SkillsPanel() {
 
   return (
     <section className="settings-panel">
-      <div className="section-header">
-        <h3 className="panel-title">{t("settings.skills.title")}</h3>
-        <div className="skills-tab-bar">
+      <div className="section-header skills-section-header">
+        <div className="section-header-actions">
+          <div className="skills-tab-bar">
           <button
             className={`skills-tab ${activeTab === "installed" ? "active" : ""}`}
             onClick={() => setActiveTab("installed")}
@@ -257,9 +281,40 @@ export default function SkillsPanel() {
             {t("settings.skills.market")}
           </button>
         </div>
+        </div>
       </div>
 
-      <p className="panel-desc">{t("settings.skills.desc")}</p>
+      <p className="panel-desc">
+        {t("settings.skills.desc")}
+        <button
+          className="btn btn-sm btn-outline"
+          onClick={previewPrompt}
+          style={{ marginLeft: 8 }}
+          title="查看启用 Skills 会注入的 System Prompt"
+        >
+          <EyeIcon size={12} /> {showPromptPreview ? "收起" : "查看注入内容"}
+        </button>
+      </p>
+
+      {/* Skills 注入的 System Prompt 预览 */}
+      {showPromptPreview && (
+        <div className="skill-prompt-preview" style={{
+          background: "var(--sidebar-bg)",
+          border: "1px solid var(--border-color)",
+          borderRadius: 8,
+          padding: 12,
+          marginBottom: 12,
+          maxHeight: 300,
+          overflow: "auto",
+          fontSize: 12,
+          fontFamily: "monospace",
+          whiteSpace: "pre-wrap",
+          lineHeight: 1.5,
+          opacity: 0.85,
+        }}>
+          {promptPreviewContent || "加载中..."}
+        </div>
+      )}
 
       {/* 搜索栏 */}
       <div className="skills-search-bar">

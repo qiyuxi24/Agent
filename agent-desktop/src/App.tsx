@@ -5,11 +5,12 @@ import Sidebar from "./components/Sidebar";
 import ChatView, { type ChatViewHandle } from "./pages/ChatView";
 import SettingsPage from "./pages/SettingsPage";
 import BrowserPanel from "./pages/BrowserPanel";
+import IdePage from "./pages/IdePage";
 import { useAppStore } from "./stores/appStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { PanelLeftOpenIcon } from "./components/Icons";
 
-type Page = "chat" | "settings" | "browser";
+type Page = "chat" | "settings" | "browser" | "ide";
 
 function App() {
   const { t } = useTranslation();
@@ -72,6 +73,22 @@ function App() {
     return () => mq.removeEventListener("change", handleChange);
   }, []);
 
+  // IDE 启动：打开独立 Tauri 窗口
+  const handleNavigate = async (p: Page) => {
+    if (p === "ide") {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("code_server_open_ide_window");
+      } catch (e) {
+        console.error("打开 IDE 窗口失败:", e);
+        // 降级：在主页面内显示 IdePage
+        setPage("ide");
+      }
+      return;
+    }
+    setPage(p);
+  };
+
   // 全局快捷键
   useKeyboardShortcuts({
     onNewConversation: () => createConversation(),
@@ -109,13 +126,15 @@ function App() {
       <div className="app-container">
         <Sidebar
           currentPage={page}
-          onNavigate={setPage}
+          onNavigate={handleNavigate}
           collapsed={sidebarCollapsed}
           onToggleCollapse={toggleSidebar}
         />
         <main className="main-content">
           {page === "browser" ? (
             <BrowserPanel />
+          ) : page === "ide" ? (
+            <IdePage />
           ) : (
             <ChatView ref={chatViewRef} conversationId={activeConversationId} />
           )}

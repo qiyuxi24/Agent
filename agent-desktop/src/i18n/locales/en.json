@@ -22,7 +22,8 @@
     "deleteChat": "Delete",
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
-    "browser": "Browser"
+    "browser": "Browser",
+    "ide": "IDE"
   },
 
   "chat": {

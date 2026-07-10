@@ -31,6 +31,9 @@
   flex-direction: column;
   border-right: 1px solid var(--border-color);
   user-select: none;
+  overflow: hidden;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .sidebar-header {
@@ -263,7 +266,6 @@
 .sidebar.collapsed {
   width: 0;
   min-width: 0;
-  overflow: hidden;
   border-right: none;
 }
 
@@ -285,6 +287,17 @@
   justify-content: center;
   z-index: 50;
   transition: all 0.15s;
+  animation: sidebar-expand-in 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes sidebar-expand-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 .sidebar-expand-float:hover {
   background: var(--bg-secondary);

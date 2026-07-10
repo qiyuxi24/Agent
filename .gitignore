@@ -46,5 +46,20 @@ tmp/
 temp/
 route.md
 
-# ===== CodeBuddy 项目数据（非代码） =====
+# ===== 发布产物本地副本 =====
+releases/
+
+# ===== Code Server（~212MB，构建时自动下载，不提交到 Git）=====
+agent-desktop/src-tauri/binaries/code-server/
+agent-desktop/src-tauri/binaries/package.tar.gz
+
+# ===== CodeBuddy 项目数据（非代码，本地开发用，不提交） =====
 .codebuddy/
+
+# ===== agent-loop-reference 中第三方克隆仓库（仅本地参考，不纳入主仓库） =====
+agent-loop-reference/community/
+agent-loop-reference/reused/
+agent-loop-reference/my_agent_loop.py
+agent-loop-reference/concurrent_agent.py
+agent-loop-reference/concurrent_agent_async.py
+agent-loop-reference/requirements.txt

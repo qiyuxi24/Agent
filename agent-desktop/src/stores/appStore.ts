@@ -84,6 +84,9 @@ interface AppState {
   persistErrorCount: number;
   sidebarCollapsed: boolean;
 
+  // 对话模式：聊天（纯对话）/ Agent（启用 MCP 工具循环）
+  chatMode: "chat" | "agent";
+
   // 动作 - 对话
   setActiveConversation: (id: string) => void;
   createConversation: () => string;
@@ -116,6 +119,9 @@ interface AppState {
 
   // 侧边栏折叠
   toggleSidebar: () => void;
+
+  // 动作 - 对话模式切换
+  setChatMode: (mode: "chat" | "agent") => void;
 
   // 动作 - 持久化
   loadFromStore: () => Promise<void>;
@@ -166,10 +172,11 @@ const defaultProvider = (): ModelProvider => ({
 });
 
 // 内置 Web 工具 MCP Server（联网搜索 + 网页爬取，零依赖、无需 API Key）
+// 使用相对路径，Rust 端会在运行时解析为绝对路径
 const DEFAULT_WEB_SERVER: McpServerUI = {
   name: "web",
   command: "node",
-  args: ["c:/Users/34239/Documents/GitHub/Agent/agent-desktop/mcp-servers/web/index.mjs"],
+  args: ["./mcp-servers/web/index.mjs"],
 };
 
 // 内置 Tavily MCP Server（AI 搜索引擎 + 内容提取，需设置 TAVILY_API_KEY 环境变量）
@@ -177,7 +184,7 @@ const DEFAULT_WEB_SERVER: McpServerUI = {
 const DEFAULT_TAVILY_SERVER: McpServerUI = {
   name: "tavily",
   command: "node",
-  args: ["c:/Users/34239/Documents/GitHub/Agent/agent-desktop/mcp-servers/tavily/index.mjs"],
+  args: ["./mcp-servers/tavily/index.mjs"],
 };
 
 // ========== Store 实现 ==========
@@ -207,6 +214,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   ready: false,
   persistErrorCount: 0,
   sidebarCollapsed: false,
+  chatMode: "agent",
 
   // ---- 对话操作 ----
 
@@ -427,6 +435,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     scheduleSave();
   },
 
+  // ---- 对话模式切换 ----
+
+  setChatMode: (mode) => {
+    set({ chatMode: mode });
+    scheduleSave();
+  },
+
   // ---- 持久化 ----
 
   loadFromStore: async () => {
@@ -448,6 +463,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
       const activeProviderId = (await s.get<string | null>("activeProviderId")) || providers[0]?.id || null;
       const sidebarCollapsed = (await s.get<boolean>("sidebarCollapsed")) || false;
+      const chatMode = ((await s.get<string>("chatMode")) || "agent") as "chat" | "agent";
       const mcpServers = (await s.get<McpServerUI[]>("mcpServers")) || [];
       const mcpSeeded = (await s.get<boolean>("mcpSeeded")) || false;
 
@@ -484,6 +500,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         providers,
         activeProviderId,
         sidebarCollapsed,
+        chatMode,
         mcpServers: seededMcp,
         mcpSeeded: true,
         ready: true,
@@ -522,6 +539,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       await s.set("providers", safeProviders);
       await s.set("activeProviderId", state.activeProviderId);
       await s.set("sidebarCollapsed", state.sidebarCollapsed);
+      await s.set("chatMode", state.chatMode);
       await s.set("mcpServers", state.mcpServers);
       await s.set("mcpSeeded", state.mcpSeeded);
       // 清理旧字段

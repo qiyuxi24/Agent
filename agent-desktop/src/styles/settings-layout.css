@@ -137,3 +137,9 @@
 .section-header .panel-title {
   margin-bottom: 0;
 }
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
