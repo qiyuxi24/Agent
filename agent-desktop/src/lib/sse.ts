@@ -13,11 +13,13 @@
  */
 
 export interface SSEDelta {
-  choices?: Array<{ delta?: { content?: string } }>;
+  choices?: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
 }
 
 export interface SSEParseCallbacks {
   onToken: (token: string) => void;
+  /** DeepSeek 思考链增量 （reasoning_content 字段） */
+  onThinking?: (token: string) => void;
   onDone?: () => void;
   onLine?: (line: string) => void;
   signal?: AbortSignal;
@@ -65,7 +67,14 @@ export async function parseSSEStream(
 
         try {
           const parsed: SSEDelta = JSON.parse(data);
-          const token = parsed.choices?.[0]?.delta?.content;
+          const delta = parsed.choices?.[0]?.delta;
+          if (!delta) continue;
+          // reasoning_content 和 content 互斥，优先检测思考链
+          if (delta.reasoning_content && callbacks.onThinking) {
+            callbacks.onThinking(delta.reasoning_content);
+            continue;  // 思考链 token 不计入 content
+          }
+          const token = delta.content;
           if (token) {
             onToken(token);
           }

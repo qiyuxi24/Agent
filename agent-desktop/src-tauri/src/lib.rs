@@ -4,6 +4,7 @@ mod error_codes;
 mod ide;
 mod mcp;
 mod plugins;
+mod rag;
 mod skills;
 
 use error_codes::McpError;
@@ -38,6 +39,9 @@ pub struct ChatMessage {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// DeepSeek 思考链 / Claude thinking content（用于多轮工具调用上下文保持）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,6 +69,25 @@ pub struct StreamError {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StreamDone;
+
+/// 思考过程：开始（DeepSeek/Claude 的 reasoning_content 阶段启动）
+#[derive(Debug, Clone, Serialize)]
+pub struct ThinkingStart;
+
+/// 思考过程：增量文本片段
+#[derive(Debug, Clone, Serialize)]
+pub struct ThinkingDelta {
+    pub delta: String,
+}
+
+/// 思考过程：结束（统计信息）
+#[derive(Debug, Clone, Serialize)]
+pub struct ThinkingStop {
+    /// 估算 token 数（约 1 token ≈ 4 字符，中英文混合）
+    pub tokens: u64,
+    /// 思考耗时（毫秒）
+    pub duration_ms: u64,
+}
 
 /// 工具调用开始事件（前端可渲染「正在调用 xxx」）
 #[derive(Debug, Clone, Serialize)]
@@ -97,6 +120,12 @@ fn msg_to_value(m: &ChatMessage) -> Value {
         Some(c) => map.insert("content".to_string(), Value::String(c.clone())),
         None => map.insert("content".to_string(), Value::Null),
     };
+    // DeepSeek/Claude：工具调用场景需要回传 reasoning_content 以保持思考上下文
+    if let Some(rc) = &m.reasoning_content {
+        if !rc.is_empty() {
+            map.insert("reasoning_content".to_string(), Value::String(rc.clone()));
+        }
+    }
     if let Some(tcs) = &m.tool_calls {
         let arr: Vec<Value> = tcs
             .iter()
@@ -158,6 +187,7 @@ async fn chat_stream(
                 messages.insert(0, ChatMessage {
                     role: "system".to_string(),
                     content: Some(skills_prompt),
+                    reasoning_content: None,
                     tool_calls: None,
                     tool_call_id: None,
                 });
@@ -166,6 +196,7 @@ async fn chat_stream(
             messages.insert(0, ChatMessage {
                 role: "system".to_string(),
                 content: Some(skills_prompt),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
@@ -181,18 +212,29 @@ async fn chat_stream(
         streams.insert("chat".to_string(), cancel_tx);
     }
 
-    for _ in 0..max_iterations {
-        // 本轮调用 LLM（流式输出 + 捕获 tool_calls）
-        let (assistant_content, tool_calls) =
+    for iteration in 0..max_iterations {
+        // 本轮调用 LLM（流式输出 + 捕获 tool_calls + 思考链）
+        let (assistant_content, assistant_reasoning, tool_calls) =
             run_completion(&app, &request, &messages, &tools, &mut cancel_rx).await?;
 
-        // 把 assistant 消息加回上下文
+        // Agent 轮次标记（前端可显示「第 N 轮思考」）
+        let _ = app.emit("agent-iteration", serde_json::json!({
+            "iteration": iteration + 1,
+            "total": max_iterations,
+        }));
+
+        // 把 assistant 消息加回上下文（包含 reasoning_content 用于工具调用场景）
         messages.push(ChatMessage {
             role: "assistant".to_string(),
             content: if assistant_content.is_empty() {
                 None
             } else {
                 Some(assistant_content)
+            },
+            reasoning_content: if assistant_reasoning.is_empty() {
+                None
+            } else {
+                Some(assistant_reasoning)
             },
             tool_calls: if tool_calls.is_empty() {
                 None
@@ -272,6 +314,7 @@ async fn chat_stream(
             messages.push(ChatMessage {
                 role: "tool".to_string(),
                 content: Some(result_text),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: Some(tc.id.clone()),
             });
@@ -293,14 +336,15 @@ async fn chat_stream(
     Ok(())
 }
 
-/// 调用一次 LLM 流式接口，实时推送文本 token，并收集 tool_calls
+/// 调用一次 LLM 流式接口，实时推送文本 token 与思考 token，并收集 tool_calls
+/// 返回值：(content, reasoning_content, tool_calls)
 async fn run_completion(
     app: &AppHandle,
     request: &ChatRequest,
     messages: &[ChatMessage],
     tools: &[Value],
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-) -> Result<(String, Vec<ToolCall>), String> {
+) -> Result<(String, String, Vec<ToolCall>), String> {
     let url = format!("{}/chat/completions", request.api_base.trim_end_matches('/'));
     let client = reqwest::Client::new();
 
@@ -334,13 +378,25 @@ async fn run_completion(
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut content = String::new();
+    let mut thinking = String::new();
     let mut tool_accs: Vec<ToolCallAcc> = Vec::new();
+
+    // 思考阶段计时
+    let thinking_start = Instant::now();
+    let mut thinking_started = false;
 
     loop {
         let next_chunk = tokio::select! {
             chunk = stream.next() => chunk,
             _ = cancel_rx.changed() => {
-                return Ok((content, Vec::new()));
+                // 如果正在思考中被取消，也要发 thinking-stop
+                if thinking_started {
+                    let _ = app.emit("thinking-stop", ThinkingStop {
+                        tokens: (thinking.len() as u64 / 4).max(1),
+                        duration_ms: thinking_start.elapsed().as_millis() as u64,
+                    });
+                }
+                return Ok((content, thinking, Vec::new()));
             }
         };
 
@@ -359,12 +415,44 @@ async fn run_completion(
 
                     if let Some(data) = line.strip_prefix("data: ") {
                         if data == "[DONE]" {
-                            return Ok((content, finalize_tool_calls(tool_accs)));
+                            if thinking_started {
+                                let _ = app.emit("thinking-stop", ThinkingStop {
+                                    tokens: (thinking.len() as u64 / 4).max(1),
+                                    duration_ms: thinking_start.elapsed().as_millis() as u64,
+                                });
+                            }
+                            return Ok((content, thinking, finalize_tool_calls(tool_accs)));
                         }
 
                         if let Ok(parsed) = serde_json::from_str::<Value>(data) {
                             let delta = &parsed["choices"][0]["delta"];
+
+                            // 1) 检测 reasoning_content（DeepSeek 思考链）
+                            if let Some(reasoning) = delta["reasoning_content"].as_str() {
+                                if !reasoning.is_empty() {
+                                    if !thinking_started {
+                                        thinking_started = true;
+                                        let _ = app.emit("thinking-start", ThinkingStart);
+                                    }
+                                    thinking.push_str(reasoning);
+                                    let _ = app.emit("thinking-delta", ThinkingDelta {
+                                        delta: reasoning.to_string(),
+                                    });
+                                }
+                                // reasoning_content 和 content 互斥，跳过后续 content 检测
+                                continue;
+                            }
+
+                            // 2) 普通 content token
                             if let Some(token) = delta["content"].as_str() {
+                                // 首个 content token 到达 = 思考阶段结束
+                                if thinking_started {
+                                    thinking_started = false;
+                                    let _ = app.emit("thinking-stop", ThinkingStop {
+                                        tokens: (thinking.len() as u64 / 4).max(1),
+                                        duration_ms: thinking_start.elapsed().as_millis() as u64,
+                                    });
+                                }
                                 if !token.is_empty() {
                                     content.push_str(token);
                                     let _ = app.emit(
@@ -375,8 +463,17 @@ async fn run_completion(
                                     );
                                 }
                             }
-                            // 累积分片 tool_calls
+
+                            // 3) 累积分片 tool_calls
                             if let Some(tcs) = delta["tool_calls"].as_array() {
+                                // tool_calls 出现时思考也结束了
+                                if thinking_started {
+                                    thinking_started = false;
+                                    let _ = app.emit("thinking-stop", ThinkingStop {
+                                        tokens: (thinking.len() as u64 / 4).max(1),
+                                        duration_ms: thinking_start.elapsed().as_millis() as u64,
+                                    });
+                                }
                                 for tc in tcs {
                                     let index = tc["index"].as_u64().unwrap_or(0) as usize;
                                     if index >= tool_accs.len() {
@@ -399,6 +496,13 @@ async fn run_completion(
                 }
             }
             Some(Err(e)) => {
+                // 错误时也结束思考
+                if thinking_started {
+                    let _ = app.emit("thinking-stop", ThinkingStop {
+                        tokens: (thinking.len() as u64 / 4).max(1),
+                        duration_ms: thinking_start.elapsed().as_millis() as u64,
+                    });
+                }
                 let _ = app.emit(
                     "stream-error",
                     StreamError {
@@ -411,7 +515,13 @@ async fn run_completion(
         }
     }
 
-    Ok((content, finalize_tool_calls(tool_accs)))
+    if thinking_started {
+        let _ = app.emit("thinking-stop", ThinkingStop {
+            tokens: (thinking.len() as u64 / 4).max(1),
+            duration_ms: thinking_start.elapsed().as_millis() as u64,
+        });
+    }
+    Ok((content, thinking, finalize_tool_calls(tool_accs)))
 }
 
 /// 从累积器中产出最终的 ToolCall 列表（忽略没有名字的无效项）
@@ -535,6 +645,7 @@ async fn mcp_clear_cache(
 pub struct AppState {
     active_streams: Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>,
     pub mcp: McpManager,
+    pub rag: rag::RagManager,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -545,6 +656,7 @@ pub fn run() {
         .manage(AppState {
             active_streams: Mutex::new(HashMap::new()),
             mcp: McpManager::new(),
+            rag: rag::RagManager::new(),
         })
         .invoke_handler(tauri::generate_handler![
             chat_stream,
@@ -559,6 +671,15 @@ pub fn run() {
             mcp_reconnect,
             mcp_clear_cache,
             mcp::mcp_market_list,
+            // RAG — 检索增强生成
+            rag::rag_init,
+            rag::rag_get_config,
+            rag::rag_get_stats,
+            rag::rag_index_documents,
+            rag::rag_search,
+            rag::rag_delete_document,
+            rag::rag_clear_all,
+            rag::rag_search_for_chat,
             // 浏览器模块
             browser::browser_create,
             browser::browser_navigate,

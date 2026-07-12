@@ -58,6 +58,7 @@
       "tools": "工具 / MCP",
       "skills": "Skills",
       "plugins": "插件",
+      "rag": "知识库",
       "about": "关于"
     },
 
@@ -185,6 +186,50 @@
     "about": {
       "version": "Agent Desktop v0.1.0",
       "tech": "基于 Tauri v2 + React + Rust 构建"
+    },
+
+    "rag": {
+      "title": "本地知识库 / RAG",
+      "desc": "启用后，AI 可以在对话中检索你的文档和知识，给出更准确的回答。首次使用会自动下载嵌入模型（约 47MB），之后完全离线运行。",
+      "status": "知识库状态",
+      "active": "已激活",
+      "enableTitle": "启用本地知识库",
+      "enableBtn": "启用知识库",
+      "initializing": "初始化中...",
+      "dbPath": "数据库路径",
+      "dbPathPlaceholder": "./data/rag_db（默认）",
+      "model": "嵌入模型",
+      "chunks": "分块",
+      "documents": "文档",
+      "modelLabel": "模型",
+      "addKnowledge": "添加知识",
+      "demoData": "演示数据",
+      "sourceName": "来源名称",
+      "sourceNamePlaceholder": "例如：产品说明、会议纪要、技术文档",
+      "content": "文档内容",
+      "contentPlaceholder": "粘贴或输入要索引的文本内容...",
+      "indexDoc": "索引文档",
+      "indexedDocs": "已索引文档",
+      "clearAll": "清空全部索引",
+      "searchTest": "检索测试",
+      "searchPlaceholder": "输入查询测试检索效果...",
+      "search": "搜索",
+      "searching": "检索中...",
+      "relevance": "相关度",
+      "noResults": "未找到相关结果，尝试换个查询试试",
+      "advanced": "高级设置",
+      "chunkSize": "分块大小",
+      "chunkSizeHint": "文本分块的最大字符数（语义分块，不会在句子中间切断）",
+      "topK": "检索结果数 (Top-K)",
+      "topKHint": "每次检索返回的最相关结果数量",
+      "applySettings": "应用设置（重新初始化）",
+      "needFields": "请输入文档内容和来源名称",
+      "indexSuccess": "索引成功：{{count}} 个分块",
+      "deleted": "已删除: {{name}}",
+      "cleared": "索引已清空",
+      "clearConfirm": "确定要清空所有索引数据吗？此操作不可恢复。",
+      "demoSuccess": "演示数据索引成功：{{count}} 个分块",
+      "refresh": "刷新"
     }
   },
 

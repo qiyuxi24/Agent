@@ -17,6 +17,13 @@ export interface Message {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: string;
+  /** 深度思考内容（DeepSeek reasoning_content / Claude thinking） */
+  thinking?: string;
+  /** 思考统计 */
+  thinkingStats?: {
+    tokens: number;
+    durationMs: number;
+  };
 }
 
 export type ThemeMode = "system" | "light" | "dark";
@@ -92,6 +99,7 @@ interface AppState {
   createConversation: () => string;
   addMessage: (conversationId: string, msg: Message) => void;
   updateLastAssistantMessage: (conversationId: string, content: string) => void;
+  updateLastAssistantThinking: (conversationId: string, thinking: string, stats?: { tokens: number; durationMs: number }) => void;
   updateConversationTitle: (id: string, title: string) => void;
   deleteConversation: (id: string) => void;
   togglePinConversation: (id: string) => void;
@@ -273,6 +281,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       const last = updated[updated.length - 1];
       if (last.role === "assistant") {
         updated[updated.length - 1] = { ...last, content };
+      }
+      return { messages: { ...state.messages, [conversationId]: updated } };
+    });
+    scheduleSave();
+  },
+
+  updateLastAssistantThinking: (conversationId, thinking, stats) => {
+    set((state) => {
+      const msgs = state.messages[conversationId] || [];
+      if (msgs.length === 0) return state;
+      const updated = [...msgs];
+      const last = updated[updated.length - 1];
+      if (last.role === "assistant") {
+        updated[updated.length - 1] = {
+          ...last,
+          thinking: thinking || (last.thinking ?? "") + (thinking ?? ""),
+          thinkingStats: stats ?? last.thinkingStats,
+        };
       }
       return { messages: { ...state.messages, [conversationId]: updated } };
     });

@@ -7,7 +7,7 @@ edition = "2021"
 
 [lib]
 name = "agent_desktop_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -25,3 +25,32 @@ tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 url = "2"
 dirs-next = "2"
+
+# RAG — 向量检索
+lancedb = "0.16"
+arrow = "53"
+arrow-array = "53"
+arrow-schema = "53"
+
+# RAG — 本地嵌入推理（首次自动下载模型，约 47MB）
+fastembed = "5"
+
+# RAG — 语义分块（递归字符→词→句边界，非滑动窗口）
+text-splitter = "0.32"
+
+# ==============================
+# 编译优化配置
+# ==============================
+
+[profile.release]
+opt-level = "s"           # 体积优先（桌面应用更看重包大小）
+lto = "fat"               # 跨 crate 全局链接时优化
+codegen-units = 1         # 单编译单元，最大化内联与去重
+panic = "abort"           # panic 直接终止，减小 unwind 表体积
+strip = "symbols"         # 移除符号表，大幅减小编译产物
+
+# 开发模式也做轻度优化（平衡编译速度与运行时性能）
+[profile.dev]
+opt-level = 1             # 轻度优化，编译速度影响不大但运行时快很多
+debug = 1                 # 保留行号级别的调试信息
+strip = "none"

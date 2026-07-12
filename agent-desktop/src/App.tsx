@@ -1,14 +1,16 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense, lazy } from "react";
 import { useTranslation } from "react-i18next";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Sidebar from "./components/Sidebar";
 import ChatView, { type ChatViewHandle } from "./pages/ChatView";
-import SettingsPage from "./pages/SettingsPage";
-import BrowserPanel from "./pages/BrowserPanel";
-import IdePage from "./pages/IdePage";
 import { useAppStore } from "./stores/appStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { PanelLeftOpenIcon } from "./components/Icons";
+
+// 页面级懒加载 — 首次打开时才下载对应 chunk
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const BrowserPanel = lazy(() => import("./pages/BrowserPanel"));
+const IdePage = lazy(() => import("./pages/IdePage"));
 
 type Page = "chat" | "settings" | "browser" | "ide";
 
@@ -131,13 +133,15 @@ function App() {
           onToggleCollapse={toggleSidebar}
         />
         <main className="main-content">
-          {page === "browser" ? (
-            <BrowserPanel />
-          ) : page === "ide" ? (
-            <IdePage />
-          ) : (
-            <ChatView ref={chatViewRef} conversationId={activeConversationId} />
-          )}
+          <Suspense fallback={<div className="app-loading"><p>{t("app.loading")}</p></div>}>
+            {page === "browser" ? (
+              <BrowserPanel />
+            ) : page === "ide" ? (
+              <IdePage />
+            ) : (
+              <ChatView ref={chatViewRef} conversationId={activeConversationId} />
+            )}
+          </Suspense>
         </main>
 
         {/* 侧边栏折叠时，左上角浮动展开按钮 */}
@@ -153,7 +157,9 @@ function App() {
 
         {/* 设置页作为独立浮层覆盖在主页面之上 */}
         {page === "settings" && (
-          <SettingsPage onClose={() => setPage("chat")} />
+          <Suspense fallback={<div className="app-loading"><p>{t("app.loading")}</p></div>}>
+            <SettingsPage onClose={() => setPage("chat")} />
+          </Suspense>
         )}
       </div>
     </ErrorBoundary>

@@ -198,6 +198,86 @@
   font-style: italic;
 }
 
+/* ===== 深度思考折叠面板 ===== */
+.thinking-block {
+  margin-bottom: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius, 8px);
+  background: var(--bg-secondary);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.thinking-block.thinking-streaming {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.1);
+}
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: background 0.15s;
+}
+.thinking-header:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+.thinking-icon {
+  font-size: 14px;
+}
+.thinking-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.thinking-stats {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.thinking-chevron {
+  font-size: 12px;
+  transition: transform 0.2s;
+  color: var(--text-muted);
+}
+.thinking-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+.thinking-content {
+  padding: 0 12px 10px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.thinking-content .thinking-text {
+  margin: 0;
+  padding: 8px;
+  background: var(--bg-primary, rgba(0, 0, 0, 0.1));
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono, "Cascadia Code", "Fira Code", Consolas, monospace);
+  max-height: 250px;
+  overflow-y: auto;
+}
+.thinking-loading {
+  display: block;
+  padding: 12px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 /* ===== Chat Input ===== */
 .chat-input-area {
   padding: 16px;

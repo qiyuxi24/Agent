@@ -36,6 +36,48 @@ function SafeMarkdown({ content }: { content: string }) {
   );
 }
 
+/** 深度思考折叠面板 */
+function ThinkingBlock({
+  thinking,
+  stats,
+  streaming,
+}: {
+  thinking: string;
+  stats?: { tokens: number; durationMs: number };
+  streaming?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  if (!thinking && !streaming) return null;
+
+  const tokensStr = stats ? `${stats.tokens} tokens` : "";
+  const timeStr = stats ? `${(stats.durationMs / 1000).toFixed(1)}s` : "";
+  const statusText = streaming
+    ? "思考中..."
+    : stats
+      ? [tokensStr, timeStr].filter(Boolean).join(" · ")
+      : "";
+
+  return (
+    <div className={`thinking-block ${streaming ? "thinking-streaming" : ""}`}>
+      <div className="thinking-header" onClick={() => setCollapsed(!collapsed)}>
+        <span className="thinking-icon">🧠</span>
+        <span className="thinking-label">深度思考</span>
+        {statusText && <span className="thinking-stats">{statusText}</span>}
+        <span className={`thinking-chevron ${collapsed ? "collapsed" : ""}`}>▾</span>
+      </div>
+      {!collapsed && (
+        <div className="thinking-content">
+          {thinking ? (
+            <pre className="thinking-text">{thinking}</pre>
+          ) : (
+            <span className="thinking-loading">⏳ 正在思考...</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** 工具调用步骤展示（连接 MCP 工具时显示 AI 调用的工具与结果） */
 function ToolSteps({
   steps,
@@ -105,6 +147,11 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     errorCategory?: string | null;
   }[]>([]);
 
+  // 思考状态（thinking-start/delta/stop 事件驱动）
+  const [thinkingContent, setThinkingContent] = useState("");
+  const [thinkingStats, setThinkingStats] = useState<{ tokens: number; durationMs: number } | undefined>();
+  const [isThinking, setIsThinking] = useState(false);
+
   // 暴露方法给父组件（快捷键用）
   useImperativeHandle(ref, () => ({
     focusInput: () => {
@@ -125,6 +172,7 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
   // Actions（稳定引用）
   const addMessage = useAppStore((s) => s.addMessage);
   const updateLastAssistantMessage = useAppStore((s) => s.updateLastAssistantMessage);
+  const updateLastAssistantThinking = useAppStore((s) => s.updateLastAssistantThinking);
   const setActiveProvider = useAppStore((s) => s.setActiveProvider);
   const setActiveModel = useAppStore((s) => s.setActiveModel);
 
@@ -201,6 +249,28 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
 
     let fullContent = "";
     setToolSteps([]);
+    setThinkingContent("");
+    setThinkingStats(undefined);
+    setIsThinking(false);
+
+    // 思考事件监听
+    const unlistenThinkStart = await listen("thinking-start", () => {
+      if (cancelledRef.current) return;
+      setIsThinking(true);
+      setThinkingContent("");
+      setThinkingStats(undefined);
+    });
+
+    const unlistenThinkDelta = await listen<{ delta: string }>("thinking-delta", (event) => {
+      if (cancelledRef.current) return;
+      setThinkingContent((prev) => prev + event.payload.delta);
+      updateLastAssistantThinking(conversationId!, event.payload.delta);
+    });
+
+    const unlistenThinkStop = await listen<{ tokens: number; duration_ms: number }>("thinking-stop", () => {
+      // thinking-stop 在 content 或 tool_calls 开始时就触发，stats 可能还不完整
+      // 这里记录时间戳，最终 stats 在 stream-done 时写入 message
+    });
 
     const unlistenTc = await listen<{ name: string; arguments: string }>(
       "tool-call",
@@ -250,6 +320,11 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     });
 
     const unlisten3 = await listen("stream-done", () => {
+      if (thinkingContent && conversationId) {
+        // 写入最终 thinking 内容到 message
+        updateLastAssistantThinking(conversationId, thinkingContent, thinkingStats);
+      }
+      setIsThinking(false);
       setIsLoading(false);
     });
 
@@ -271,6 +346,9 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     unlisten3();
     unlistenTc();
     unlistenTr();
+    unlistenThinkStart();
+    unlistenThinkDelta();
+    unlistenThinkStop();
   };
 
   // === 浏览器模式 ===
@@ -280,6 +358,12 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
 
     const url = `${activeProvider?.apiBase || "https://api.openai.com/v1"}/chat/completions`;
     let fullContent = "";
+    let fullThinking = "";
+    const thinkingStartTime = Date.now();
+
+    setThinkingContent("");
+    setThinkingStats(undefined);
+    setIsThinking(false);
 
     try {
       const response = await fetch(url, {
@@ -310,11 +394,34 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
       if (!reader) throw new Error(t("chat.error.cannotReadStream"));
 
       await parseSSEStream(reader, {
+        onThinking: (token) => {
+          if (!isThinking) {
+            setIsThinking(true);
+          }
+          fullThinking += token;
+          setThinkingContent(fullThinking);
+          updateLastAssistantThinking(conversationId!, token);
+        },
         onToken: (token) => {
+          if (isThinking) {
+            // 思考阶段结束，保存 stats
+            setThinkingStats({
+              tokens: Math.max(1, Math.ceil(fullThinking.length / 4)),
+              durationMs: Date.now() - thinkingStartTime,
+            });
+            setIsThinking(false);
+          }
           fullContent += token;
           updateLastAssistantMessage(conversationId!, fullContent);
         },
         onDone: () => {
+          if (fullThinking && conversationId) {
+            updateLastAssistantThinking(conversationId, fullThinking, {
+              tokens: Math.max(1, Math.ceil(fullThinking.length / 4)),
+              durationMs: Date.now() - thinkingStartTime,
+            });
+          }
+          setIsThinking(false);
           setIsLoading(false);
         },
         signal: controller.signal,
@@ -507,11 +614,26 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
                   {msg.role === "user" ? "👤" : "🤖"}
                 </div>
                 <div className="message-content">
+                  {/* 思考过程（仅 assistant 有 thinking 数据时显示） */}
+                  {msg.role === "assistant" && (msg.thinking || (isLoading && msg === currentMessages[currentMessages.length - 1] && thinkingContent)) && (
+                    <ThinkingBlock
+                      thinking={
+                        msg.thinking ||
+                        (msg === currentMessages[currentMessages.length - 1] ? thinkingContent : "")
+                      }
+                      stats={msg.thinkingStats}
+                      streaming={
+                        isLoading &&
+                        msg === currentMessages[currentMessages.length - 1] &&
+                        isThinking
+                      }
+                    />
+                  )}
                   <div className={`message-bubble ${msg.role === "assistant" ? "message-bubble-markdown" : ""}`}>
                     {msg.role === "assistant" ? (
                       msg.content ? (
                         <SafeMarkdown content={msg.content} />
-                      ) : isLoading ? (
+                      ) : isLoading && msg === currentMessages[currentMessages.length - 1] ? (
                         <span className="thinking-text">{t("chat.thinking")}</span>
                       ) : null
                     ) : (

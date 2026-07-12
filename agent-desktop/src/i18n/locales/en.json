@@ -58,6 +58,7 @@
       "tools": "Tools / MCP",
       "skills": "Skills",
       "plugins": "Plugins",
+      "rag": "Knowledge Base",
       "about": "About"
     },
 
@@ -185,6 +186,50 @@
     "about": {
       "version": "Agent Desktop v0.1.0",
       "tech": "Built with Tauri v2 + React + Rust"
+    },
+
+    "rag": {
+      "title": "Local Knowledge Base / RAG",
+      "desc": "When enabled, the AI can search your documents for more accurate answers. An embedding model (~47MB) will be downloaded on first use, then everything runs offline.",
+      "status": "Knowledge Base Status",
+      "active": "Active",
+      "enableTitle": "Enable Local Knowledge Base",
+      "enableBtn": "Enable Knowledge Base",
+      "initializing": "Initializing...",
+      "dbPath": "Database Path",
+      "dbPathPlaceholder": "./data/rag_db (default)",
+      "model": "Embedding Model",
+      "chunks": "chunks",
+      "documents": "documents",
+      "modelLabel": "Model",
+      "addKnowledge": "Add Knowledge",
+      "demoData": "Demo Data",
+      "sourceName": "Source Name",
+      "sourceNamePlaceholder": "e.g. Product Specs, Meeting Notes, Tech Docs",
+      "content": "Document Content",
+      "contentPlaceholder": "Paste or type text to index...",
+      "indexDoc": "Index Document",
+      "indexedDocs": "Indexed Documents",
+      "clearAll": "Clear All Indexes",
+      "searchTest": "Search Test",
+      "searchPlaceholder": "Enter query to test retrieval...",
+      "search": "Search",
+      "searching": "Searching...",
+      "relevance": "Relevance",
+      "noResults": "No results found. Try a different query.",
+      "advanced": "Advanced Settings",
+      "chunkSize": "Chunk Size",
+      "chunkSizeHint": "Max characters per text chunk (semantic splitting, won't break mid-sentence)",
+      "topK": "Results Count (Top-K)",
+      "topKHint": "Max number of relevant results per search",
+      "applySettings": "Apply & Reinitialize",
+      "needFields": "Please enter the document content and source name",
+      "indexSuccess": "Indexed successfully: {{count}} chunks",
+      "deleted": "Deleted: {{name}}",
+      "cleared": "Index cleared",
+      "clearConfirm": "Are you sure you want to clear all index data? This cannot be undone.",
+      "demoSuccess": "Demo data indexed: {{count}} chunks",
+      "refresh": "Refresh"
     }
   },
 

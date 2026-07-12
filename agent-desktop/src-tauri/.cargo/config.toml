@@ -1,0 +1,28 @@
+# ============================================================
+# Cargo 编译加速配置
+# ============================================================
+
+# ---- Windows MSVC 目标 ----
+[target.x86_64-pc-windows-msvc]
+# 方案 A：lld-link（LLVM 链接器，比 MSVC link.exe 快 2-5x）
+# 前置条件：winget install LLVM.LLVM
+# 取消下面注释即可启用
+# linker = "lld-link"
+# rustflags = ["-C", "link-arg=/DEBUG:FASTLINK"]
+
+# 方案 B：使用 MSVC 默认链接器 + 增量调试信息（无需额外安装）
+# FASTLINK 仅生成调试信息的索引而非完整副本，大幅减少链接耗时
+rustflags = ["-C", "link-arg=/DEBUG:FASTLINK"]
+
+# ---- 构建工具路径 ----
+# protoc 供 lance-encoding / prost-build 等 protobuf 依赖使用
+[env]
+PROTOC = "C:\\Users\\34239\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Google.Protobuf_Microsoft.Winget.Source_8wekyb3d8bbwe\\bin\\protoc.exe"
+
+# ---- sccache 编译缓存（可选，重复编译快 3-10x）----
+# 安装：cargo install sccache --locked
+# 取消下面注释即可启用：
+[build]
+# rustc-wrapper = "sccache"
+# 并发编译数（根据 CPU 核心数调整，留 1-2 核给系统）
+jobs = 8
