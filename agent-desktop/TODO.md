@@ -54,10 +54,25 @@
 - [x] Zustand 状态管理
 - [x] Error Boundary
 - [x] .gitignore / CHANGELOG / README
+- [x] 子进程隐藏控制台窗口（Layer 1: `CREATE_NO_WINDOW` 全局覆盖 ide.rs/code_server.rs/mcp.rs/skills.rs）
 
 ---
 
 ## 近期 TODO（P0）
+
+### 子进程管理 — 后续两层
+
+> Windows 子进程窗口闪现问题分三层解决：
+> - [x] **Layer 1**：`CREATE_NO_WINDOW` — 隐藏子进程窗口（✅ 已完成）
+> - [ ] **Layer 2**：**进程生命周期管理** — 应用退出时自动清理所有子进程
+>   - [ ] `code_server.rs`：Drop 时清理 `CS_PROCESS`
+>   - [ ] `mcp.rs`：`McpManager::drop()` 遍历 kill 所有 MCP 子进程
+>   - [ ] `ide.rs`：`run_compiled` 等编译型执行在 panic/取消时清理临时文件
+>   - [ ] 方案：Rust `Drop` trait + `#[cfg(windows)]` Job Object（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）
+> - [ ] **Layer 3**：**静默启动 + 退出清理验证** — 端到端测试确保零残留窗口
+>   - [ ] 测试：启动应用 → 打开 IDE (code-server) → 运行代码 → 关闭应用 → 确认无残留进程
+>   - [ ] 测试：Agent 模式触发 MCP 工具调用 → 中途取消 → 确认 MCP 子进程被终止
+>   - [ ] 测试：编译型语言执行超时 → 确认 taskkill 子进程树完整清理
 
 ### 对话增强
 - [ ] 对话历史搜索
