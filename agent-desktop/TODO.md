@@ -54,7 +54,7 @@
 - [x] Zustand 状态管理
 - [x] Error Boundary
 - [x] .gitignore / CHANGELOG / README
-- [x] 子进程隐藏控制台窗口（Layer 1: `CREATE_NO_WINDOW` 全局覆盖 ide.rs/code_server.rs/mcp.rs/skills.rs）
+- [x] 子进程隐藏控制台窗口 — 已覆盖现有代码（⚠️ 后续新增 Command 需持续加 `creation_flags(0x08000000)`）
 
 ---
 
@@ -63,7 +63,7 @@
 ### 子进程管理 — 后续两层
 
 > Windows 子进程窗口闪现问题分三层解决：
-> - [x] **Layer 1**：`CREATE_NO_WINDOW` — 隐藏子进程窗口（✅ 已完成）
+> - [!] **Layer 1**：`CREATE_NO_WINDOW` — 隐藏子进程窗口（已覆盖现有代码，后续新增 `Command` 需持续加 flag）
 > - [ ] **Layer 2**：**进程生命周期管理** — 应用退出时自动清理所有子进程
 >   - [ ] `code_server.rs`：Drop 时清理 `CS_PROCESS`
 >   - [ ] `mcp.rs`：`McpManager::drop()` 遍历 kill 所有 MCP 子进程
