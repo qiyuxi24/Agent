@@ -68,8 +68,8 @@ echo   Build complete!
 echo   Output: src-tauri\target\release\bundle\
 echo.
 echo   Architecture:
-echo   agent-desktop.exe  <-- Rust binary (compiled once)
-echo   dist\              <-- Frontend (can rebuild separately)
+echo   agent-desktop.exe  ^<-- Rust binary (compiled once)
+echo   dist\              ^<-- Frontend (can rebuild separately)
 echo.
 echo   To update UI only: run build-frontend.bat
 echo ========================================
