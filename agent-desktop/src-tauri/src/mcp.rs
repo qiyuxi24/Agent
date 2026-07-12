@@ -20,6 +20,9 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration, Instant};
 
@@ -203,7 +206,9 @@ impl McpClient {
     pub async fn connect(config: &McpServerConfig) -> Result<Self, McpError> {
         let resolved_config = config.clone().resolve_paths();
 
-        let mut cmd = Command::new(&resolved_config.command);
+        let mut std_cmd = std::process::Command::new(&resolved_config.command);
+        std_cmd.creation_flags(0x08000000);
+        let mut cmd = Command::from(std_cmd);
         cmd.args(&resolved_config.args);
         if let Some(env) = &resolved_config.env {
             for (k, v) in env {

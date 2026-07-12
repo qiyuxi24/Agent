@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use tauri::AppHandle;
 
 /// Skills 根目录（相对于项目根目录的 .codebuddy/skills/）
@@ -588,8 +591,10 @@ async fn fetch_local_market() -> Result<Vec<SkillMarketEntry>, String> {
 #[tauri::command]
 pub async fn skills_clawhub_install(id: String) -> Result<String, String> {
     // 尝试运行 clawhub CLI 安装
-    let output = tokio::process::Command::new("clawhub")
-        .args(["skill", "install", &id])
+    let mut std_cmd = std::process::Command::new("clawhub");
+    std_cmd.creation_flags(0x08000000);
+    std_cmd.args(["skill", "install", &id]);
+    let output = tokio::process::Command::from(std_cmd)
         .output()
         .await;
 

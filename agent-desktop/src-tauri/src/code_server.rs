@@ -13,6 +13,9 @@ use serde::Serialize;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command as StdCommand, Stdio};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -187,12 +190,14 @@ fn verify_code_server(app: &AppHandle) -> Result<String, String> {
 
     // 检查 node 是否可用
     StdCommand::new("node")
+        .creation_flags(0x08000000)
         .arg("--version")
         .output()
         .map_err(|_| "未找到 Node.js，请安装 Node.js 后重试".to_string())?;
 
     // 获取 code-server 版本
     let version = StdCommand::new("node")
+        .creation_flags(0x08000000)
         .arg(&entry)
         .arg("--version")
         .output()
@@ -278,6 +283,7 @@ fn spawn_code_server(app: &AppHandle, workspace: &str, port: u16) -> Result<Chil
     );
 
     StdCommand::new("node")
+        .creation_flags(0x08000000)
         .arg(&entry_str)
         .arg("--bind-addr")
         .arg(&bind_addr)

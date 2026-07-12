@@ -14,6 +14,9 @@ use std::process::Stdio;
 use std::sync::mpsc;
 use std::time::Duration;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 /// 代码执行超时（秒）
 const EXEC_TIMEOUT: u64 = 30;
 
@@ -111,6 +114,7 @@ fn detect_languages() -> Vec<LanguageInfo> {
 fn detect_command(commands: &[&str]) -> (bool, String) {
     for cmd in commands {
         if let Ok(output) = std::process::Command::new(*cmd)
+            .creation_flags(0x08000000)
             .arg("--version")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -187,6 +191,7 @@ pub async fn ide_execute_code(request: ExecuteRequest) -> Result<ExecuteResult, 
 
 fn run_python(code: &str, args: &[String], stdin: &str, start: std::time::Instant) -> Result<ExecuteResult, String> {
     let mut cmd = std::process::Command::new("python3");
+    cmd.creation_flags(0x08000000);
     for a in args {
         cmd.arg(a);
     }
@@ -197,6 +202,7 @@ fn run_python(code: &str, args: &[String], stdin: &str, start: std::time::Instan
 
     let child = cmd.spawn().or_else(|_| {
         let mut c = std::process::Command::new("python");
+        c.creation_flags(0x08000000);
         c.arg("-c").arg(code)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -209,6 +215,7 @@ fn run_python(code: &str, args: &[String], stdin: &str, start: std::time::Instan
 
 fn run_script(cmd: &str, extra: &[&str], code: &str, stdin: &str, label: &str, start: std::time::Instant) -> Result<ExecuteResult, String> {
     let mut c = std::process::Command::new(cmd);
+    c.creation_flags(0x08000000);
     for a in extra {
         c.arg(a);
     }
@@ -224,6 +231,7 @@ fn run_script(cmd: &str, extra: &[&str], code: &str, stdin: &str, label: &str, s
 
 fn run_typescript(code: &str, stdin: &str, start: std::time::Instant) -> Result<ExecuteResult, String> {
     let child = std::process::Command::new("ts-node")
+        .creation_flags(0x08000000)
         .args(["-e", code])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -231,6 +239,7 @@ fn run_typescript(code: &str, stdin: &str, start: std::time::Instant) -> Result<
         .spawn()
         .or_else(|_| {
             std::process::Command::new("npx")
+                .creation_flags(0x08000000)
                 .args(["ts-node", "-e", code])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
@@ -249,6 +258,7 @@ fn run_bash(code: &str, stdin: &str, start: std::time::Instant) -> Result<Execut
         ("bash", "-c")
     };
     let child = std::process::Command::new(shell)
+        .creation_flags(0x08000000)
         .arg(flag)
         .arg(code)
         .stdin(Stdio::piped())
@@ -267,6 +277,7 @@ fn run_compiled(compiler: &str, src_name: &str, bin_base: &str, extra_args: &[&s
     std::fs::write(&src_file, code).map_err(|e| format!("写入临时文件失败: {}", e))?;
 
     let mut cc = std::process::Command::new(compiler);
+    cc.creation_flags(0x08000000);
     cc.arg(&src_file).arg("-o").arg(&bin_file);
     for a in extra_args {
         cc.arg(a);
@@ -282,6 +293,7 @@ fn run_compiled(compiler: &str, src_name: &str, bin_base: &str, extra_args: &[&s
     }
 
     let child = std::process::Command::new(&bin_file)
+        .creation_flags(0x08000000)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().map_err(|e| format!("运行失败: {}", e))?;
 
@@ -296,6 +308,7 @@ fn run_compiled_go(code: &str, stdin: &str, start: std::time::Instant) -> Result
     std::fs::write(&src_file, code).map_err(|e| format!("写入临时文件失败: {}", e))?;
 
     let compile_out = std::process::Command::new("go")
+        .creation_flags(0x08000000)
         .args(["build", "-o"])
         .arg(&bin_file).arg(&src_file)
         .stdout(Stdio::piped()).stderr(Stdio::piped())
@@ -309,6 +322,7 @@ fn run_compiled_go(code: &str, stdin: &str, start: std::time::Instant) -> Result
     }
 
     let child = std::process::Command::new(&bin_file)
+        .creation_flags(0x08000000)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().map_err(|e| format!("运行失败: {}", e))?;
 
@@ -393,6 +407,7 @@ fn kill_process(pid: u32) {
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("taskkill")
+            .creation_flags(0x08000000)
             .args(["/PID", &pid.to_string(), "/F", "/T"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -732,6 +747,7 @@ pub async fn ide_terminal_exec(command: String, cwd: Option<String>) -> Result<T
         };
 
         let mut cmd = std::process::Command::new(shell);
+        cmd.creation_flags(0x08000000);
         cmd.arg(flag).arg(&command)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
