@@ -97,7 +97,7 @@ if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] 版本号更新失败
     exit /b 1
 )
-echo   已更新 taudi.conf.json#version → %VERSION%
+echo   已更新 tauri.conf.json#version → %VERSION%
 
 :: ==== ② Git 提交 & 打标签 ====
 echo [2/4] 提交版本变更并打标签...

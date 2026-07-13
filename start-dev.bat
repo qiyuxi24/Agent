@@ -34,6 +34,19 @@ if not exist "node_modules\" (
     )
 )
 
+:: 检查 code-server 是否已就绪（IDE 功能需要，约 212MB）
+set "CS_ENTRY=src-tauri\binaries\code-server\release\out\node\entry.js"
+if not exist "%CS_ENTRY%" (
+    echo [INFO] Code Server not found, downloading (one-time, ~212MB)...
+    cd /d "%~dp0"
+    node scripts\download-code-server.mjs
+    cd /d "%~dp0agent-desktop"
+    if %ERRORLEVEL% NEQ 0 (
+        echo [WARN] Code Server download failed. IDE feature will be unavailable.
+        echo [WARN] You can retry later: run setup-code-server.bat
+    )
+)
+
 echo.
 echo ========================================
 echo   Agent Desktop - Dev Mode

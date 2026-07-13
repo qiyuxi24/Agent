@@ -177,7 +177,7 @@ if (!extracted) {
 }
 
 // === 安装依赖 ===
-log('安装 npm 依赖 (--production)...', YELLOW);
+log('安装 npm 依赖 (--production --ignore-scripts)...', YELLOW);
 try {
     execSync('npm install --production --ignore-scripts', {
         cwd: RELEASE_DIR,
@@ -187,6 +187,61 @@ try {
     log('  npm install 完成', GREEN);
 } catch {
     log('  npm install 有警告（部分依赖可能未安装），可手动处理', YELLOW);
+}
+
+// === 检查和编译原生模块 ===
+// code-server 依赖 7 个 @vscode/* 原生 .node 模块。
+// --ignore-scripts 跳过了编译，使用 code-server 预编译的二进制。
+// 但如果预编译模块与当前系统不兼容（Node.js 版本、VS 组件等），
+// 需要重新编译。此步骤自动检测并修复。
+const NATIVE_MODULES = [
+    { pkg: 'windows-registry', file: 'winregistry.node' },
+    { pkg: 'windows-process-tree', file: 'windows_process_tree.node' },
+    { pkg: 'deviceid', file: 'windows.node' },
+    { pkg: 'native-watchdog', file: 'watchdog.node' },
+    { pkg: 'spdlog', file: 'spdlog.node' },
+    { pkg: 'sqlite3', file: 'vscode-sqlite3.node' },
+    { pkg: 'windows-ca-certs', file: 'crypt32.node' },
+];
+
+const VSCODE_DIR = join(RELEASE_DIR, 'lib', 'vscode', 'node_modules', '@vscode');
+let missingModules = [];
+
+for (const m of NATIVE_MODULES) {
+    const nodePath = join(VSCODE_DIR, m.pkg, 'build', 'Release', m.file);
+    if (!existsSync(nodePath)) {
+        missingModules.push(`${m.pkg}/${m.file}`);
+    }
+}
+
+if (missingModules.length > 0) {
+    log(`检测到 ${missingModules.length} 个原生模块缺失:`, YELLOW);
+    missingModules.forEach(m => log(`  - ${m}`, GRAY));
+    log('正在重新安装 code-server 依赖（含原生编译，约 1-3 分钟）...', YELLOW);
+    log('如失败，请确保已安装 Visual Studio Build Tools（C++ 工作负载）', GRAY);
+    try {
+        // 对 vscode 子目录重新执行 npm install（这次不跳过 scripts）
+        const VSCODE_NODE_DIR = join(RELEASE_DIR, 'lib', 'vscode');
+        execSync('npm install --production', {
+            cwd: VSCODE_NODE_DIR,
+            stdio: 'inherit',
+            timeout: 600_000
+        });
+        log('  原生模块编译完成', GREEN);
+    } catch (e) {
+        log('  原生模块编译失败！', RED);
+        log(`  错误: ${e.message}`, RED);
+        log('  请手动运行（可能需要管理员权限）：', YELLOW);
+        log(`    cd "${VSCODE_NODE_DIR}"`, YELLOW);
+        log('    npm install --production', YELLOW);
+        log('', GRAY);
+        log('  常见原因及修复：', CYAN);
+        log('  1. 未安装 VS BuildTools → 安装时勾选"使用 C++ 的桌面开发"', GRAY);
+        log('  2. 缺少 Spectre 缓解库 → VS Installer → 修改 → 单个组件 → 搜索 Spectre', GRAY);
+        log('  3. Node.js 版本不匹配 → code-server 要求 Node.js 22，当前: ' + process.version, GRAY);
+    }
+} else {
+    log('  所有 7 个原生模块验证通过', GREEN);
 }
 
 // === 验证 ===

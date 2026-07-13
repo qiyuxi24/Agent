@@ -11,6 +11,10 @@
     "download:code-server": "node ../scripts/download-code-server.mjs",
     "setup:code-server": "node ../scripts/download-code-server.mjs"
   },
+  "engines": {
+    "node": ">=18 <=22",
+    "npm": ">=9"
+  },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/api": "^2.5.0",

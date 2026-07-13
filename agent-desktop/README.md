@@ -19,8 +19,16 @@
 ### 环境要求
 
 - **Windows 10/11**（系统自带 WebView2）
-- **Node.js** >= 18
-- **Rust**（rustc + cargo）
+- **Node.js 22.x**（必须，code-server 要求 Node 22；v24 不兼容）
+- **Rust**（rustc + cargo，安装：`winget install Rustlang.Rustup`）
+- **Visual Studio Build Tools 2022**（C++ 工作负载，用于编译 Rust 和原生 Node 模块）
+  - 安装时勾选"使用 C++ 的桌面开发"
+  - 额外安装"MSVC v143 - VS 2022 C++ Spectre-mitigated libs"（单个组件 → 搜索 Spectre）
+- **Git**（克隆仓库）
+- **tar 或 7z**（解压 code-server，Windows 10 1803+ 自带 tar）
+- **protoc**（Protocol Buffers 编译器，用于 RAG 向量检索）
+  - `winget install Google.Protobuf` 或从 [GitHub Releases](https://github.com/protocolbuffers/protobuf/releases) 下载
+  - 确保 `protoc --version` 可用
 
 ### 开发模式（热更新）
 
@@ -35,6 +43,23 @@ cd agent-desktop
 npm install
 npm run tauri dev
 ```
+
+### 下载 Code Server（IDE 功能，约 212MB）
+
+IDE 功能需要 code-server，首次构建时会自动下载。也可手动下载：
+
+```bash
+# 方式 1：使用下载脚本
+setup-code-server.bat
+# 或
+npm run download:code-server
+
+# 方式 2：完整构建（自动下载 + 编译）
+build.bat
+```
+
+> **注意**：下载脚本会自动检查并编译 code-server 的 7 个原生模块（`@vscode/*`）。
+> 如编译失败，通常是缺少 VS BuildTools 的 Spectre 库，详见下方故障排查。
 
 ### 使用
 
@@ -134,6 +159,45 @@ agent-desktop/
 - [ ] 快捷键支持
 - [ ] 系统托盘
 - [ ] 自动更新
+
+## 故障排查
+
+### `Cannot find module '../build/Release/xxx.node'`
+
+code-server 的 7 个原生模块（`@vscode/*`）未被正确编译。原因通常是：
+
+1. **Node.js 版本不对**：code-server v4.127.0 要求 Node.js 22，当前项目已配置 `.nvmrc` 锁定 22
+2. **缺少 VS BuildTools 组件**：需安装"使用 C++ 的桌面开发" + Spectre 缓解库
+3. **VS 版本太新**：VS 2026 Insiders 可能缺少某些组件
+
+**修复步骤：**
+
+```bash
+# 1. 确认 Node.js 版本为 22
+node -v  # 应输出 v22.x.x
+
+# 2. 重新下载 code-server（含原生模块自动检测和编译）
+npm run download:code-server
+
+# 3. 如仍失败，手动编译 vscode 的原生模块
+cd src-tauri/binaries/code-server/release/lib/vscode
+npm install --production
+```
+
+如果遇到 `MSB8040: Spectre-mitigated libraries are required`，在 VS Installer 中安装 Spectre 库：
+- 打开 Visual Studio Installer
+- 修改 → 单个组件 → 搜索 "Spectre"
+- 勾选 "MSVC v143 - VS 2022 C++ Spectre-mitigated libs"
+
+### `error: failed to run custom build command for ... (protoc)`
+
+缺少 Protocol Buffers 编译器：
+
+```bash
+winget install Google.Protobuf
+# 或从 https://github.com/protocolbuffers/protobuf/releases 下载解压到 PATH
+protoc --version  # 验证安装
+```
 
 ## License
 

@@ -19,6 +19,10 @@ fn main() {
         run_npm_install(&release_dir);
     }
 
+    // 检查 code-server 原生模块是否就绪
+    // 如果缺失，提示用户运行 npm run download:code-server 重新编译
+    check_native_modules(&release_dir);
+
     tauri_build::build();
 }
 
@@ -81,6 +85,50 @@ fn run_npm_install(release_dir: &Path) {
             s.code().unwrap_or(-1)
         ),
         Err(e) => println!("cargo:warning=npm install error: {}", e),
+    }
+}
+
+/// 检查 code-server 所需的 7 个 @vscode/* 原生 .node 模块是否存在
+fn check_native_modules(release_dir: &Path) {
+    let vscode_dir = release_dir
+        .join("lib")
+        .join("vscode")
+        .join("node_modules")
+        .join("@vscode");
+
+    let modules: [(&str, &str); 7] = [
+        ("windows-registry", "winregistry.node"),
+        ("windows-process-tree", "windows_process_tree.node"),
+        ("deviceid", "windows.node"),
+        ("native-watchdog", "watchdog.node"),
+        ("spdlog", "spdlog.node"),
+        ("sqlite3", "vscode-sqlite3.node"),
+        ("windows-ca-certs", "crypt32.node"),
+    ];
+
+    let mut missing = Vec::new();
+    for (pkg, file) in &modules {
+        let path = vscode_dir.join(pkg).join("build").join("Release").join(file);
+        if !path.exists() {
+            missing.push(format!("@{}/{}", pkg, file));
+        }
+    }
+
+    if !missing.is_empty() {
+        println!(
+            "cargo:warning=WARNING: {} native module(s) missing from code-server:",
+            missing.len()
+        );
+        for m in &missing {
+            println!("cargo:warning=  - {}", m);
+        }
+        println!("cargo:warning=These are required for the IDE feature to work.");
+        println!("cargo:warning=Fix: run \"npm run download:code-server\" in the agent-desktop directory.");
+        println!(
+            "cargo:warning=Or: cd {} && npm install --production",
+            vscode_dir.display()
+        );
+        println!("cargo:warning=You may need Visual Studio Build Tools with C++ workload.");
     }
 }
 
