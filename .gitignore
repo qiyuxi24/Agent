@@ -53,9 +53,6 @@ releases/
 agent-desktop/src-tauri/binaries/code-server/
 agent-desktop/src-tauri/binaries/package.tar.gz
 
-# ===== CodeBuddy 项目数据（非代码，本地开发用，不提交） =====
-.codebuddy/
-
 # ===== ClaudeCode 项目数据（非代码，本地开发用，不提交） =====
 CLAUDE.md
 

@@ -1,0 +1,72 @@
+[
+  {
+    "id": "frontend-dev",
+    "name": "前端开发工作室",
+    "description_zh": "全栈前端开发：精美 UI 设计、电影级动画、AI 媒体生成、转化文案。构建落地页、营销网站、产品页、仪表盘。",
+    "description_en": "Full-stack frontend: premium UI, cinematic animations, AI media, persuasive copy.",
+    "version": "0.1.1",
+    "category": "frontend",
+    "download_url": "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills/frontend-dev",
+    "size_bytes": 14480
+  },
+  {
+    "id": "fullstack-dev",
+    "name": "全栈开发",
+    "description_zh": "后端架构 + 前后端集成：Express/Next.js/FastAPI/Go，REST API，实时功能(SSE/WebSocket)，认证，文件上传。",
+    "description_en": "Backend architecture & fullstack integration: REST APIs, real-time, auth, file uploads.",
+    "version": "0.1.0",
+    "category": "backend",
+    "download_url": "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills/fullstack-dev",
+    "size_bytes": 13970
+  },
+  {
+    "id": "mcp-builder",
+    "name": "MCP 服务器构建器",
+    "description_zh": "构建高质量 MCP 服务器：Python/Node SDK，工具设计，stdio 传输，让 LLM 调用外部服务。",
+    "description_en": "Build MCP servers: Python/Node SDK, tool design, stdio transport.",
+    "version": "0.1.0",
+    "category": "mcp",
+    "download_url": "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills/mcp-builder",
+    "size_bytes": 7500
+  },
+  {
+    "id": "prompt-engineering-expert",
+    "name": "Prompt 工程专家",
+    "description_zh": "高级 Prompt 工程：自定义指令设计、提示词优化、AI Agent 行为调优。",
+    "description_en": "Advanced prompt engineering: custom instructions, prompt optimization, AI agent tuning.",
+    "version": "0.1.0",
+    "category": "ai",
+    "download_url": "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills/prompt-engineering-expert",
+    "size_bytes": 1630
+  },
+  {
+    "id": "agent-team-orchestration",
+    "name": "智能体团队编排",
+    "description_zh": "多智能体团队编排：角色定义、任务流转、交接协议、质量门禁。",
+    "description_en": "Multi-agent team orchestration: roles, task routing, handoff protocols, quality gates.",
+    "version": "0.1.0",
+    "category": "ai",
+    "download_url": "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills/agent-team-orchestration",
+    "size_bytes": 5100
+  },
+  {
+    "id": "deep-research",
+    "name": "深度研究",
+    "description_zh": "结构化深度研究：生成大纲、并行搜索、Markdown 报告。支持学术研究、技术选型、市场分析。",
+    "description_en": "Structured deep research: outline generation, parallel search, Markdown reports.",
+    "version": "0.1.0",
+    "category": "research",
+    "download_url": "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills/deep-research",
+    "size_bytes": 2325
+  },
+  {
+    "id": "browser-use",
+    "name": "浏览器自动化",
+    "description_zh": "浏览器交互自动化：网页测试、表单填写、截图、数据提取。",
+    "description_en": "Browser automation: web testing, form filling, screenshots, data extraction.",
+    "version": "0.1.0",
+    "category": "tools",
+    "download_url": "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills/browser-use",
+    "size_bytes": 7760
+  }
+]
