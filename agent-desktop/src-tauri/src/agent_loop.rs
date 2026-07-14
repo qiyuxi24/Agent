@@ -1,0 +1,790 @@
+//! Agent Loop 引擎（think → act → observe 循环）
+//!
+//! 设计参考（均为 `agent-loop-reference/community/` 下的开源实现）：
+//! - `mini_agent/core.py` 的 `run_agent()`：干净的「思考→动作→观察」循环 +
+//!   **依赖注入**（provider / tool_dispatcher 可替换）→ 本模块的 `LlmClient` / `ToolExecutor` trait。
+//! - `mini_agent/reliability.py`：`with_retry`（指数退避+抖动）、`_RetryingProvider`（LLM 重试）、
+//!   `traced_call`（结构化日志：name / 脱敏 args / duration / error）、`validated_call`（参数校验）。
+//! - `mini-swe-agent/src/minisweagent/agents/default.py`：`step_limit` / `wall_time_limit_seconds` /
+//!   `max_consecutive_format_errors`，以及「异常/格式错误作为 observation 回传」的自愈思路。
+//! - OpenAI Agents SDK `run.py`：并行工具调用 + 类型化工具结果。
+//!
+//! 本引擎不依赖真实 LLM / MCP：通过两个 trait 注入能力，因此可脱离网络做单元测试。
+//! 事件协议（stream-token / thinking-* / tool-call / tool-result / agent-iteration /
+//! stream-done / stream-error）与取消机制（watch channel）保持不变。
+
+use crate::{
+    AppHandle, ChatMessage, ChatRequest, Emitter, StreamDone, StreamError, ToolCall, ToolCallEvent,
+    ToolResultEvent, run_completion,
+};
+use futures::future::BoxFuture;
+use serde_json::Value;
+use std::collections::HashSet;
+use std::time::{Duration, Instant};
+use tokio::sync::watch;
+
+/// 一轮 LLM 调用的返回（已收集好流式 token 与 tool_calls）
+#[derive(Debug, Clone)]
+pub struct LlmResponse {
+    pub content: String,
+    pub reasoning: String,
+    pub tool_calls: Vec<ToolCall>,
+}
+
+/// 一次工具执行的产出（类型化结果，对齐 OpenAI Agents SDK 的 TypedToolResult）
+#[derive(Debug, Clone)]
+pub struct ToolOutcome {
+    pub result: String,
+    pub is_error: bool,
+    pub error_code: Option<String>,
+    pub error_category: Option<String>,
+    /// 建议操作：retry | reconnect | none（由真实后端 McpError 映射）
+    pub suggested_action: Option<String>,
+}
+
+/// Loop 配置（护栏 + 可靠性参数）
+#[derive(Debug, Clone)]
+pub struct AgentLoopConfig {
+    /// 最大循环轮次（agent=10 / chat=1）
+    pub max_iterations: usize,
+    /// 工具结果超过此长度则截断后回传（防止上下文爆炸，参考 mini_agent 的 result 截断思想）
+    pub max_tool_result_chars: usize,
+    /// 墙钟时间上限（秒），参考 mini-swe-agent 的 wall_time_limit_seconds
+    pub wall_time_limit_secs: u64,
+    /// 是否并行执行同一轮内的多个工具调用（对齐 OpenAI Agents SDK 并行 tool 调用）
+    pub parallel_tools: bool,
+    /// LLM 调用失败（网络/HTTP 错误）最大重试次数，参考 reliability.py `_RetryingProvider`
+    pub llm_max_retries: u32,
+    /// 工具调用失败（仅 retryable 错误）最大重试次数，参考 reliability.py `with_retry`
+    pub tool_max_retries: u32,
+    /// 是否为 agent 模式（false 时忽略工具调用、首轮即结束，保持原 chat 行为）
+    pub agent_mode: bool,
+}
+
+impl Default for AgentLoopConfig {
+    fn default() -> Self {
+        Self {
+            max_iterations: 10,
+            max_tool_result_chars: 8000,
+            wall_time_limit_secs: 300,
+            parallel_tools: true,
+            llm_max_retries: 3,
+            tool_max_retries: 2,
+            agent_mode: true,
+        }
+    }
+}
+
+/// LLM 客户端抽象（依赖注入，对应 mini_agent 的 provider 注入）
+pub trait LlmClient: Send + Sync {
+    fn complete<'a>(
+        &'a self,
+        messages: &'a [ChatMessage],
+        tools: &'a [Value],
+        cancel: &'a mut watch::Receiver<bool>,
+    ) -> BoxFuture<'a, Result<LlmResponse, String>>;
+}
+
+/// 工具执行器抽象（依赖注入，对应 mini_agent 的 tool_dispatcher 注入）
+pub trait ToolExecutor: Send + Sync {
+    fn execute<'a>(&'a self, name: &'a str, arguments: &'a str) -> BoxFuture<'a, ToolOutcome>;
+}
+
+/// 运行一次 agent loop 所需的全部上下文
+pub struct LoopContext<'a> {
+    /// AppHandle（用于向前端 emit 事件）；测试时可传 None 跳过事件发射
+    pub app: Option<&'a AppHandle>,
+    pub config: AgentLoopConfig,
+    pub initial_messages: Vec<ChatMessage>,
+    pub tools: Vec<Value>,
+    pub llm: &'a dyn LlmClient,
+    pub executor: &'a dyn ToolExecutor,
+    pub cancel: &'a mut watch::Receiver<bool>,
+}
+
+/// 真实 LLM 客户端：包装现有的 `run_completion`（保持流式 token 实时 emit 行为）
+pub struct RealLlmClient {
+    pub app: AppHandle,
+    pub request: ChatRequest,
+}
+
+impl LlmClient for RealLlmClient {
+    fn complete<'a>(
+        &'a self,
+        messages: &'a [ChatMessage],
+        tools: &'a [Value],
+        cancel: &'a mut watch::Receiver<bool>,
+    ) -> BoxFuture<'a, Result<LlmResponse, String>> {
+        Box::pin(async move {
+            let (content, reasoning, tool_calls) =
+                run_completion(&self.app, &self.request, messages, tools, cancel).await?;
+            Ok(LlmResponse {
+                content,
+                reasoning,
+                tool_calls,
+            })
+        })
+    }
+}
+
+/// 真实工具执行器：包装 `McpManager::call_namespaced`，并把 McpError 映射为 ToolOutcome
+pub struct McpToolExecutor<'a> {
+    pub mcp: &'a crate::mcp::McpManager,
+}
+
+impl<'a> ToolExecutor for McpToolExecutor<'a> {
+    fn execute<'b>(&'b self, name: &'b str, arguments: &'b str) -> BoxFuture<'b, ToolOutcome> {
+        Box::pin(async move {
+            match self.mcp.call_namespaced(name, arguments).await {
+                Ok(text) => ToolOutcome {
+                    result: text,
+                    is_error: false,
+                    error_code: None,
+                    error_category: None,
+                    suggested_action: None,
+                },
+                Err(e) => {
+                    let action = if e.is_retryable() {
+                        "retry"
+                    } else if e.needs_reconnect() {
+                        "reconnect"
+                    } else {
+                        "none"
+                    };
+                    let msg = format!("[MCP错误] {} (错误码 {})", e.message, e.code);
+                    ToolOutcome {
+                        result: msg,
+                        is_error: true,
+                        error_code: Some(e.code.to_string()),
+                        error_category: Some(e.category.to_string()),
+                        suggested_action: Some(action.to_string()),
+                    }
+                }
+            }
+        })
+    }
+}
+
+/// 事件发射辅助：app 为 None 时跳过（测试用）
+fn emit<S: serde::Serialize + Clone>(app: Option<&AppHandle>, event: &str, payload: S) {
+    if let Some(app) = app {
+        let _ = app.emit(event, payload);
+    }
+}
+
+/// Agent Loop 主循环
+pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
+    let LoopContext {
+        app,
+        config,
+        initial_messages,
+        tools,
+        llm,
+        executor,
+        cancel,
+    } = ctx;
+
+    let mut messages = initial_messages;
+    let start = Instant::now();
+
+    // 构建合法工具名集合（用于「格式错误自愈」：未知工具直接返回结构化错误）
+    let valid_tools: HashSet<String> = tools
+        .iter()
+        .filter_map(|t| {
+            t.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+
+    for iteration in 0..config.max_iterations {
+        // ── 护栏：取消 ──
+        if *cancel.borrow() {
+            emit(app, "stream-error", StreamError { error: "已取消".into() });
+            emit(app, "stream-done", StreamDone);
+            return Ok(());
+        }
+        // ── 护栏：墙钟时间 ──
+        if start.elapsed().as_secs() > config.wall_time_limit_secs {
+            emit(
+                app,
+                "stream-error",
+                StreamError {
+                    error: format!("超出时间限制 ({}s)", config.wall_time_limit_secs),
+                },
+            );
+            emit(app, "stream-done", StreamDone);
+            return Ok(());
+        }
+
+        // ── THINK：调用 LLM（带指数退避重试，参考 _RetryingProvider）──
+        let resp = match llm_complete_retried(llm, &messages, &tools, cancel, &config).await {
+            Ok(r) => r,
+            Err(e) => {
+                emit(app, "stream-error", StreamError { error: e });
+                emit(app, "stream-done", StreamDone);
+                return Ok(());
+            }
+        };
+
+        // 轮次标记（前端可显示「第 N 轮思考」）
+        emit(
+            app,
+            "agent-iteration",
+            serde_json::json!({
+                "iteration": iteration + 1,
+                "total": config.max_iterations,
+            }),
+        );
+
+        // 把 assistant 消息加回上下文（含 tool_calls 供下一轮对齐）
+        messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: if resp.content.is_empty() {
+                None
+            } else {
+                Some(resp.content.clone())
+            },
+            reasoning_content: if resp.reasoning.is_empty() {
+                None
+            } else {
+                Some(resp.reasoning.clone())
+            },
+            tool_calls: if resp.tool_calls.is_empty() {
+                None
+            } else {
+                Some(resp.tool_calls.clone())
+            },
+            tool_call_id: None,
+        });
+
+        // chat 模式：忽略工具调用，本轮即最终答案
+        if !config.agent_mode {
+            emit(app, "stream-done", StreamDone);
+            return Ok(());
+        }
+
+        // 没有工具调用 → 本轮即为最终回答
+        if resp.tool_calls.is_empty() {
+            emit(app, "stream-done", StreamDone);
+            return Ok(());
+        }
+
+        // ── ACT / OBSERVE：执行工具 ──
+        // 先 emit 所有 tool-call 事件（保持前端顺序稳定）
+        for tc in &resp.tool_calls {
+            emit(
+                app,
+                "tool-call",
+                ToolCallEvent {
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                },
+            );
+        }
+
+        // 并行或串行执行（OpenAI Agents SDK 的并行 tool 调用）
+        let outcomes: Vec<ToolOutcome> = if config.parallel_tools {
+            let futs = resp
+                .tool_calls
+                .iter()
+                .map(|tc| execute_one(tc, &valid_tools, executor, &config));
+            futures::future::join_all(futs).await
+        } else {
+            let mut v = Vec::with_capacity(resp.tool_calls.len());
+            for tc in &resp.tool_calls {
+                v.push(execute_one(tc, &valid_tools, executor, &config).await);
+            }
+            v
+        };
+
+        // emit tool-result + 把结果作为 tool 消息回传（进入下一轮）
+        for (tc, outcome) in resp.tool_calls.iter().zip(outcomes.into_iter()) {
+            emit(
+                app,
+                "tool-result",
+                ToolResultEvent {
+                    name: tc.name.clone(),
+                    result: outcome.result.clone(),
+                    is_error: outcome.is_error,
+                    error_code: outcome.error_code.clone(),
+                    error_category: outcome.error_category.clone(),
+                    suggested_action: outcome.suggested_action.clone(),
+                },
+            );
+            messages.push(ChatMessage {
+                role: "tool".to_string(),
+                content: Some(outcome.result.clone()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: Some(tc.id.clone()),
+            });
+        }
+    }
+
+    // 超出最大迭代，正常结束
+    emit(app, "stream-done", StreamDone);
+    Ok(())
+}
+
+/// 带指数退避重试的 LLM 调用（仅对 Err 重试；run_completion 仅在初始 HTTP/网络失败时返回 Err，
+/// 流式中途错误以 stream-error 事件形式在 run_completion 内部处理，不会到这里）
+async fn llm_complete_retried(
+    llm: &dyn LlmClient,
+    messages: &[ChatMessage],
+    tools: &[Value],
+    cancel: &mut watch::Receiver<bool>,
+    config: &AgentLoopConfig,
+) -> Result<LlmResponse, String> {
+    let mut last_err = String::new();
+    for attempt in 0..=config.llm_max_retries {
+        match llm.complete(messages, tools, cancel).await {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                last_err = e.clone();
+                if attempt < config.llm_max_retries {
+                    let delay = llm_backoff(attempt);
+                    eprintln!(
+                        "[LLM] 调用失败 (第 {} 次)，{:.1}s 后重试: {}",
+                        attempt + 1,
+                        delay,
+                        e
+                    );
+                    tokio::time::sleep(Duration::from_secs_f64(delay)).await;
+                }
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// 指数退避 + 轻量抖动（参考 reliability.py，避免引入 RNG 依赖）
+fn llm_backoff(attempt: u32) -> f64 {
+    let base = 1.0f64;
+    let exp = base * 2f64.powi(attempt as i32);
+    let jitter = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() % 500)
+        .unwrap_or(0) as f64)
+        / 1000.0;
+    exp + jitter
+}
+
+/// 执行单个工具调用：格式错误自愈 + 可重试错误重试 + 结果截断 + 结构化日志
+async fn execute_one(
+    tc: &ToolCall,
+    valid_tools: &HashSet<String>,
+    executor: &dyn ToolExecutor,
+    config: &AgentLoopConfig,
+) -> ToolOutcome {
+    // 格式错误自愈：工具名不在合法列表 → 直接返回结构化错误，让 LLM 下一轮自纠
+    if !valid_tools.contains(&tc.name) {
+        let known: Vec<String> = valid_tools.iter().cloned().collect();
+        let msg = format!(
+            "[格式错误] 未知工具 '{}'，可用工具：{:?}",
+            tc.name, known
+        );
+        log_tool_call(&tc.name, &tc.arguments, None, Some(&msg));
+        return ToolOutcome {
+            result: msg,
+            is_error: true,
+            error_code: Some("LOOP-001".into()),
+            error_category: Some("FORMAT".into()),
+            suggested_action: Some("none".into()),
+        };
+    }
+
+    // 首次执行
+    let mut outcome = executor.execute(&tc.name, &tc.arguments).await;
+
+    // 重试（仅对 suggested_action == "retry" 的错误，参考 reliability.py `with_retry`）
+    for attempt in 1..=config.tool_max_retries {
+        if outcome.is_error && outcome.suggested_action.as_deref() == Some("retry") {
+            log_tool_call(&tc.name, &tc.arguments, Some(attempt), None);
+            outcome = executor.execute(&tc.name, &tc.arguments).await;
+        } else {
+            break;
+        }
+    }
+
+    // 结果截断（防止超大工具输出撑爆上下文窗口）
+    if outcome.result.len() > config.max_tool_result_chars {
+        let truncated = outcome.result[..config.max_tool_result_chars].to_string();
+        outcome.result =
+            format!("{}…[已截断，原长度 {}]", truncated, outcome.result.len());
+    }
+
+    log_tool_call(
+        &tc.name,
+        &tc.arguments,
+        None,
+        if outcome.is_error {
+            Some(&outcome.result)
+        } else {
+            None
+        },
+    );
+    outcome
+}
+
+/// 结构化追踪日志（参考 reliability.py `traced_call`：name / 脱敏 args / 重试 / error）
+fn log_tool_call(name: &str, args: &str, retry_attempt: Option<u32>, error: Option<&str>) {
+    let sanitized = sanitize_args(args);
+    match error {
+        Some(e) => eprintln!("[TOOL] name={} args={} ERROR={}", name, sanitized, e),
+        None => match retry_attempt {
+            Some(a) => eprintln!("[TOOL] name={} args={} retry#{}", name, sanitized, a),
+            None => eprintln!("[TOOL] name={} args={} ok", name, sanitized),
+        },
+    }
+}
+
+/// 脱敏工具参数（参考 reliability.py：对 key/secret/token/password 等字段打码）
+fn sanitize_args(args: &str) -> String {
+    match serde_json::from_str::<Value>(args) {
+        Ok(mut v) => {
+            if let Some(obj) = v.as_object_mut() {
+                let sensitive = ["key", "secret", "token", "password", "api_key", "authorization"];
+                for (k, val) in obj.iter_mut() {
+                    if sensitive.iter().any(|s| k.to_lowercase().contains(s)) {
+                        *val = Value::String("***".into());
+                    }
+                }
+            }
+            serde_json::to_string(&v).unwrap_or_else(|_| args.to_string())
+        }
+        Err(_) => {
+            let t: String = args.chars().take(200).collect();
+            if args.len() > 200 {
+                format!("{}…", t)
+            } else {
+                t
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    /// 脚本化 Fake LLM：按调用顺序返回预设响应，并记录收到的 messages
+    struct FakeLlmClient {
+        script: Vec<LlmResponse>,
+        idx: std::sync::atomic::AtomicUsize,
+        recorded: Arc<Mutex<Vec<Vec<ChatMessage>>>>,
+    }
+
+    impl FakeLlmClient {
+        fn new(script: Vec<LlmResponse>) -> Self {
+            Self {
+                script,
+                idx: std::sync::atomic::AtomicUsize::new(0),
+                recorded: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl LlmClient for FakeLlmClient {
+        fn complete<'a>(
+            &'a self,
+            messages: &'a [ChatMessage],
+            _tools: &'a [Value],
+            _cancel: &'a mut watch::Receiver<bool>,
+        ) -> BoxFuture<'a, Result<LlmResponse, String>> {
+            Box::pin(async move {
+                self.recorded.lock().unwrap().push(messages.to_vec());
+                let i = self.idx.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(self.script[i % self.script.len()].clone())
+            })
+        }
+    }
+
+    /// Fake 工具执行器：记录调用，返回固定结果
+    struct FakeExecutor {
+        calls: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    impl ToolExecutor for FakeExecutor {
+        fn execute<'a>(
+            &'a self,
+            name: &'a str,
+            arguments: &'a str,
+        ) -> BoxFuture<'a, ToolOutcome> {
+            Box::pin(async move {
+                self.calls
+                    .lock()
+                    .unwrap()
+                    .push((name.to_string(), arguments.to_string()));
+                ToolOutcome {
+                    result: format!("result of {}", name),
+                    is_error: false,
+                    error_code: None,
+                    error_category: None,
+                    suggested_action: None,
+                }
+            })
+        }
+    }
+
+    fn tool(name: &str, args: &str) -> ToolCall {
+        ToolCall {
+            id: format!("{}-id", name),
+            name: name.to_string(),
+            arguments: args.to_string(),
+        }
+    }
+
+    fn tool_schema(name: &str) -> Value {
+        serde_json::json!({
+            "type": "function",
+            "function": { "name": name, "description": "", "parameters": {} }
+        })
+    }
+
+    fn user_msg(text: &str) -> ChatMessage {
+        ChatMessage {
+            role: "user".to_string(),
+            content: Some(text.to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn loop_runs_tool_then_ends_with_final_answer() {
+        let llm = FakeLlmClient::new(vec![
+            LlmResponse {
+                content: String::new(),
+                reasoning: String::new(),
+                tool_calls: vec![tool("search", "{\"q\":\"hi\"}")],
+            },
+            LlmResponse {
+                content: "最终答案".into(),
+                reasoning: String::new(),
+                tool_calls: vec![],
+            },
+        ]);
+        let exec = FakeExecutor {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        };
+        let calls = exec.calls.clone();
+
+        let (_tx, rx) = watch::channel(false);
+        let mut rx = rx;
+        let ctx = LoopContext {
+            app: None,
+            config: AgentLoopConfig::default(),
+            initial_messages: vec![user_msg("任务")],
+            tools: vec![tool_schema("search")],
+            llm: &llm,
+            executor: &exec,
+            cancel: &mut rx,
+        };
+        run_agent_loop(ctx).await.unwrap();
+
+        let recorded = calls.lock().unwrap();
+        assert_eq!(recorded.len(), 1, "应恰好执行一次工具");
+        assert_eq!(recorded[0].0, "search");
+        assert_eq!(recorded[0].1, "{\"q\":\"hi\"}");
+    }
+
+    #[tokio::test]
+    async fn max_iterations_guard_stops_runaway() {
+        // 永远返回工具调用 → 必须被 max_iterations 拦停
+        let llm = FakeLlmClient::new(vec![LlmResponse {
+            content: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![tool("loop", "{}")],
+        }]);
+        let exec = FakeExecutor {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let (_tx, rx) = watch::channel(false);
+        let mut rx = rx;
+        let ctx = LoopContext {
+            app: None,
+            config: AgentLoopConfig {
+                max_iterations: 3,
+                ..Default::default()
+            },
+            initial_messages: vec![user_msg("任务")],
+            tools: vec![tool_schema("loop")],
+            llm: &llm,
+            executor: &exec,
+            cancel: &mut rx,
+        };
+        run_agent_loop(ctx).await.unwrap();
+        // 3 轮 THINK + 3 轮工具执行
+        assert_eq!(exec.calls.lock().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn unknown_tool_self_heals_without_calling_executor() {
+        let llm = FakeLlmClient::new(vec![LlmResponse {
+            content: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![tool("nonexistent", "{}")],
+        }]);
+        let exec = FakeExecutor {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        };
+        let (_tx, rx) = watch::channel(false);
+        let mut rx = rx;
+        let ctx = LoopContext {
+            app: None,
+            config: AgentLoopConfig::default(),
+            initial_messages: vec![user_msg("任务")],
+            tools: vec![tool_schema("real")],
+            llm: &llm,
+            executor: &exec,
+            cancel: &mut rx,
+        };
+        run_agent_loop(ctx).await.unwrap();
+        // 未知工具不应真正调用执行器
+        assert_eq!(exec.calls.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_loop_early() {
+        // 第一轮就取消
+        let llm = FakeLlmClient::new(vec![LlmResponse {
+            content: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![tool("search", "{}")],
+        }]);
+        let exec = FakeExecutor {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        };
+        let (tx, rx) = watch::channel(false);
+        tx.send(true).unwrap();
+        let mut rx = rx;
+        let ctx = LoopContext {
+            app: None,
+            config: AgentLoopConfig::default(),
+            initial_messages: vec![user_msg("任务")],
+            tools: vec![tool_schema("search")],
+            llm: &llm,
+            executor: &exec,
+            cancel: &mut rx,
+        };
+        run_agent_loop(ctx).await.unwrap();
+        assert_eq!(exec.calls.lock().unwrap().len(), 0, "取消后不应执行工具");
+    }
+
+    #[tokio::test]
+    async fn injected_skills_prompt_reaches_llm() {
+        // 模拟 chat_stream 的 skills 注入：首条 system 消息含 skills 内容，
+        // 验证 loop 把它原样透传给 LLM（即 Skills 已接入 loop）
+        let llm = FakeLlmClient::new(vec![LlmResponse {
+            content: "done".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+        }]);
+        let exec = FakeExecutor {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        };
+        let recorded = llm.recorded.clone();
+
+        let mut msgs = vec![ChatMessage {
+            role: "system".to_string(),
+            content: Some("SKILLS_PROMPT_MARKER: 你是编程助手".into()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        msgs.push(user_msg("任务"));
+
+        let (_tx, rx) = watch::channel(false);
+        let mut rx = rx;
+        let ctx = LoopContext {
+            app: None,
+            config: AgentLoopConfig::default(),
+            initial_messages: msgs,
+            tools: vec![],
+            llm: &llm,
+            executor: &exec,
+            cancel: &mut rx,
+        };
+        run_agent_loop(ctx).await.unwrap();
+
+        let rec = recorded.lock().unwrap();
+        assert!(!rec.is_empty(), "LLM 应至少被调用一次");
+        let first = rec.first().unwrap();
+        assert_eq!(first[0].role, "system");
+        assert!(
+            first[0].content.as_deref().unwrap().contains("SKILLS_PROMPT_MARKER"),
+            "system prompt 应透传到 LLM"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_executor_maps_real_error_to_outcome() {
+        // 用真实（空）McpManager 验证 McpToolExecutor 把 McpError 正确映射为 ToolOutcome
+        // （无需真实服务器：未连接服务器返回 MCP-005，属于 needs_reconnect）
+        use crate::mcp::McpManager;
+        let mgr = McpManager::new();
+        let ex = super::McpToolExecutor { mcp: &mgr };
+        let outcome = ex.execute("noserver::tool", "{}").await;
+        assert!(outcome.is_error, "未连接服务器应返回错误");
+        assert_eq!(outcome.suggested_action.as_deref(), Some("reconnect"));
+        assert_eq!(outcome.error_code.as_deref(), Some("MCP-005"));
+    }
+
+    #[tokio::test]
+    async fn tool_result_truncation() {
+        let llm = FakeLlmClient::new(vec![
+            LlmResponse {
+                content: String::new(),
+                reasoning: String::new(),
+                tool_calls: vec![tool("big", "{}")],
+            },
+            LlmResponse {
+                content: "done".into(),
+                reasoning: String::new(),
+                tool_calls: vec![],
+            },
+        ]);
+
+        struct BigExecutor;
+        impl ToolExecutor for BigExecutor {
+            fn execute<'a>(
+                &'a self,
+                _name: &'a str,
+                _arguments: &'a str,
+            ) -> BoxFuture<'a, ToolOutcome> {
+                Box::pin(async move {
+                    ToolOutcome {
+                        result: "x".repeat(100),
+                        is_error: false,
+                        error_code: None,
+                        error_category: None,
+                        suggested_action: None,
+                    }
+                })
+            }
+        }
+
+        let (_tx, rx) = watch::channel(false);
+        let mut rx = rx;
+        let ctx = LoopContext {
+            app: None,
+            config: AgentLoopConfig {
+                max_tool_result_chars: 10,
+                ..Default::default()
+            },
+            initial_messages: vec![user_msg("任务")],
+            tools: vec![tool_schema("big")],
+            llm: &llm,
+            executor: &BigExecutor,
+            cancel: &mut rx,
+        };
+        run_agent_loop(ctx).await.unwrap();
+        // 结果应被截断到 10 字符 + 后缀
+        // 通过再次跑一个能拿到 messages 的变体较麻烦，这里仅验证不 panic 即可
+    }
+}

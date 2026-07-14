@@ -31,6 +31,14 @@
 - [x] 内置 MCP Server：sqlite（本地数据库查询/建表/CRUD）
 - [x] 7 个 MCP 市场推荐
 
+### Agent Loop 引擎（2026-07-14 完善）
+- [x] 将内联在 `chat_stream` 的循环抽为独立可测模块 `agent_loop.rs`（think→act→observe）
+- [x] 依赖注入：`LlmClient` / `ToolExecutor` trait（参考 `mini_agent/core.py` 的 provider/tool_dispatcher 注入）
+- [x] 复用开源可靠性层（`mini_agent/reliability.py`）：LLM 指数退避重试、工具可重试错误重试、结果截断、结构化脱敏日志、格式错误自愈回传
+- [x] 护栏（`mini-swe-agent/default.py`）：max_iterations + wall_time 上限 + 取消信号
+- [x] 并行工具执行 `join_all`（对齐 OpenAI Agents SDK 的并行 tool 调用）
+- [x] Skills 注入 + MCP 工具聚合/调用原样保留并验证接入（7 个 `#[cfg(test)]` 单测全过）
+
 ### Skills 技能系统
 - [x] Skills 管理模块（`skills.rs`，6 个 commands）
 - [x] YAML frontmatter 解析

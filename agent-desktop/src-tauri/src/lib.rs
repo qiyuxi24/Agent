@@ -1,3 +1,4 @@
+mod agent_loop;
 mod browser;
 mod code_server;
 mod error_codes;
@@ -162,7 +163,7 @@ async fn chat_stream(
     // 模式判断：agent = 启用 MCP 工具循环；chat = 纯对话
     let agent_mode = request.mode == "agent";
 
-    // 仅 agent 模式聚合 MCP 工具；chat 模式传空，run_completion 会自动不加 tools
+    // 仅 agent 模式聚合 MCP 工具；chat 模式传空
     let tools = if agent_mode {
         state.mcp.llm_tools().await
     } else {
@@ -203,7 +204,6 @@ async fn chat_stream(
         }
         eprintln!("[chat_stream] 已注入 {} 字节的 Skills system prompt", prompt_len);
     }
-    let max_iterations = if agent_mode { 10 } else { 1 };
 
     // 注册取消信号（供 cancel_chat 命令触发）
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
@@ -212,133 +212,37 @@ async fn chat_stream(
         streams.insert("chat".to_string(), cancel_tx);
     }
 
-    for iteration in 0..max_iterations {
-        // 本轮调用 LLM（流式输出 + 捕获 tool_calls + 思考链）
-        let (assistant_content, assistant_reasoning, tool_calls) =
-            run_completion(&app, &request, &messages, &tools, &mut cancel_rx).await?;
+    // 组装真实能力并委托给 agent loop 引擎
+    let llm = agent_loop::RealLlmClient {
+        app: app.clone(),
+        request: request.clone(),
+    };
+    let executor = agent_loop::McpToolExecutor {
+        mcp: &state.mcp,
+    };
+    let config = agent_loop::AgentLoopConfig {
+        max_iterations: if agent_mode { 10 } else { 1 },
+        agent_mode,
+        ..Default::default()
+    };
+    let ctx = agent_loop::LoopContext {
+        app: Some(&app),
+        config,
+        initial_messages: messages,
+        tools,
+        llm: &llm,
+        executor: &executor,
+        cancel: &mut cancel_rx,
+    };
 
-        // Agent 轮次标记（前端可显示「第 N 轮思考」）
-        let _ = app.emit("agent-iteration", serde_json::json!({
-            "iteration": iteration + 1,
-            "total": max_iterations,
-        }));
-
-        // 把 assistant 消息加回上下文（包含 reasoning_content 用于工具调用场景）
-        messages.push(ChatMessage {
-            role: "assistant".to_string(),
-            content: if assistant_content.is_empty() {
-                None
-            } else {
-                Some(assistant_content)
-            },
-            reasoning_content: if assistant_reasoning.is_empty() {
-                None
-            } else {
-                Some(assistant_reasoning)
-            },
-            tool_calls: if tool_calls.is_empty() {
-                None
-            } else {
-                Some(tool_calls.clone())
-            },
-            tool_call_id: None,
-        });
-
-        // 聊天模式：不执行工具，本轮回复即最终答案（即使模型返回了 tool_calls 也忽略）
-        if !agent_mode {
-            let _ = app.emit("stream-done", StreamDone);
-            cleanup(&app, &state).await;
-            return Ok(());
-        }
-
-        // 没有工具调用 → 本轮即为最终回答
-        if tool_calls.is_empty() {
-            let _ = app.emit("stream-done", StreamDone);
-            cleanup(&app, &state).await;
-            return Ok(());
-        }
-
-        // 执行每个工具调用（带超时和错误码）
-        // 注意：单个工具失败不会阻断整个对话，错误结果作为 tool message 传给 LLM
-        for tc in &tool_calls {
-            let _ = app.emit(
-                "tool-call",
-                ToolCallEvent {
-                    name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
-                },
-            );
-
-            let start = Instant::now();
-            let res = state.mcp.call_namespaced(&tc.name, &tc.arguments).await;
-            let elapsed = start.elapsed();
-
-            let (result_text, is_error, error_code, error_category, suggested_action) = match &res {
-                Ok(t) => (t.clone(), false, None, None, None),
-                Err(e) => {
-                    let action = if e.is_retryable() {
-                        "retry"
-                    } else if e.needs_reconnect() {
-                        "reconnect"
-                    } else {
-                        "none"
-                    };
-                    // 包含耗时和具体错误信息帮助前端/LLM 诊断
-                    let msg = format!(
-                        "[MCP错误] {} (耗时 {:.1}s)",
-                        e.message,
-                        elapsed.as_secs_f64()
-                    );
-                    (
-                        msg,
-                        true,
-                        Some(e.code.to_string()),
-                        Some(e.category.to_string()),
-                        Some(action.to_string()),
-                    )
-                }
-            };
-
-            let _ = app.emit(
-                "tool-result",
-                ToolResultEvent {
-                    name: tc.name.clone(),
-                    result: result_text.clone(),
-                    is_error,
-                    error_code: error_code.clone(),
-                    error_category: error_category.clone(),
-                    suggested_action: suggested_action.clone(),
-                },
-            );
-
-            messages.push(ChatMessage {
-                role: "tool".to_string(),
-                content: Some(result_text),
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: Some(tc.id.clone()),
-            });
-
-            // 进程已崩溃/断开：不再继续调用同一服务器上的其余工具
-            // 但错误结果已传给 LLM，LLM 可以决定如何处理
-            if let Some(ref code) = error_code {
-                if code == "MCP-002" || code == "MCP-004" {
-                    eprintln!("[chat_stream] MCP 服务器断开，跳过该服务器的后续工具调用");
-                    // 不 break，让 LLM 看到错误结果后自行适应
-                }
-            }
-        }
-    }
-
-    // 超出最大迭代，正常结束
-    let _ = app.emit("stream-done", StreamDone);
+    let result = agent_loop::run_agent_loop(ctx).await;
     cleanup(&app, &state).await;
-    Ok(())
+    result
 }
 
 /// 调用一次 LLM 流式接口，实时推送文本 token 与思考 token，并收集 tool_calls
 /// 返回值：(content, reasoning_content, tool_calls)
-async fn run_completion(
+pub(crate) async fn run_completion(
     app: &AppHandle,
     request: &ChatRequest,
     messages: &[ChatMessage],
