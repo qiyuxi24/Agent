@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 :: ============================================================
-::  Agent Desktop — 发布脚本
+::  Votek — 发布脚本
 ::
 ::  用法：
 ::    release.bat 0.2.0          发布指定版本
@@ -67,7 +67,7 @@ if not "%BRANCH%"=="main" (
 :: ==== 显示发布信息 ====
 echo.
 echo ========================================
-echo   Agent Desktop Release
+echo   Votek Release
 echo ========================================
 echo.
 echo   Version:    %VERSION%
@@ -142,8 +142,8 @@ cd /d "%~dp0.."
 
 :: 复制安装包到 releases/ 目录
 if not exist "releases\" mkdir "releases"
-set "SRC=agent-desktop\src-tauri\target\release\bundle\nsis\Agent Desktop_%VERSION%_x64-setup.exe"
-set "DST=releases\Agent Desktop_%VERSION%_x64-setup.exe"
+set "SRC=agent-desktop\src-tauri\target\release\bundle\nsis\Votek_%VERSION%_x64-setup.exe"
+set "DST=releases\Votek_%VERSION%_x64-setup.exe"
 copy /y "%SRC%" "%DST%" >nul 2>&1
 echo   安装包已复制到: %DST%
 

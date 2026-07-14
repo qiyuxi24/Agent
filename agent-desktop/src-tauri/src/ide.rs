@@ -1,11 +1,22 @@
-//! IDE 编译器内核模块
+//! IDE 编译器内核模块（预留：内嵌编辑器）
 //!
-//! 提供代码执行、文件操作、终端等 IDE 核心能力：
-//! - 代码编译/执行（Python、JavaScript、TypeScript、Rust、Go 等）
-//! - 工作区文件读写 / 创建 / 删除 / 重命名
-//! - 目录浏览 + 文件搜索
-//! - 可用语言检测
-//! - 终端命令执行（交互式/非交互式）
+//! ## 当前状态：**代码保留，前端未接入**
+//!
+//! 本模块提供代码执行、文件操作、终端等能力，但当前 **IdePage.tsx 前端完全不调用** 这些命令。
+//! 用户的完整 IDE 体验由 `code_server.rs` 提供（外部独立 Tauri 窗口加载 code-server）。
+//!
+//! ## 为什么保留？
+//! - 未来可能实现**内嵌轻量编辑器**（不依赖 code-server 的离线模式）
+//! - `ide_*` 命令已在 lib.rs 注册，Rust 后端已可使用
+//! - `ide.css` 中包含对应的 UI 样式（工具栏/文件树/编辑器/终端）
+//!
+//! ## 接入方式（未来）
+//! - 前端新建 EmbeddedEditor 组件，调用 `ide_execute_code` / `ide_list_dir` 等
+//! - 或在 Agent Loop 中作为 MCP 工具暴露（让 LLM 直接执行代码）
+//!
+//! ## 与 code_server.rs 的分工
+//! - **code_server.rs**：进程管理 + 外部窗口 = 完整 VS Code（当前主力）
+//! - **ide.rs**：执行引擎 + 文件 API = 轻量内嵌编辑器（预留）
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -725,7 +736,7 @@ pub async fn ide_set_workspace(path: String) -> Result<String, String> {
 }
 
 /// 打开系统文件对话框选择目录
-/// TODO: 接入 tauri-plugin-dialog 实现原生目录选择器
+/// TODO: 接入 tauri-plugin-dialog 实现原生目录选择器（等前端接入 ide 模块时一起做）
 #[allow(dead_code)]
 #[tauri::command]
 pub async fn ide_pick_directory() -> Result<Option<String>, String> {

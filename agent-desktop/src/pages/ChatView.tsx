@@ -2,11 +2,11 @@ import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHand
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../stores/appStore";
 import type { Message } from "../stores/appStore";
-import MarkdownRenderer from "../components/MarkdownRenderer";
-import ErrorBoundary from "../components/ErrorBoundary";
 import { getErrorMessage, isAbortError } from "../lib/errors";
-import { getMcpErrorInfo } from "../lib/mcpErrors";
 import { parseSSEStream } from "../lib/sse";
+import MessageContent from "../components/chat/MessageContent";
+import type { ThinkingStats } from "../components/chat/ThinkingBlock";
+import type { ToolStep } from "../components/chat/ToolStepsBlock";
 import { SendIcon, StopIcon, ModelIcon, ChevronDownIcon, CheckIcon, ArrowDownIcon, EmptyChatIcon } from "../components/Icons";
 
 // 稳定空数组引用，避免 Zustand selector 每次返回新引用导致无限重渲染
@@ -27,102 +27,6 @@ export interface ChatViewHandle {
   toggleModelPicker: () => void;
 }
 
-/** Markdown 渲染器 + Error Boundary：崩溃时自动降级为纯文本显示 */
-function SafeMarkdown({ content }: { content: string }) {
-  return (
-    <ErrorBoundary fallback={<p className="md-fallback">{content}</p>}>
-      <MarkdownRenderer content={content} />
-    </ErrorBoundary>
-  );
-}
-
-/** 深度思考折叠面板 */
-function ThinkingBlock({
-  thinking,
-  stats,
-  streaming,
-}: {
-  thinking: string;
-  stats?: { tokens: number; durationMs: number };
-  streaming?: boolean;
-}) {
-  const [collapsed, setCollapsed] = useState(false);
-  if (!thinking && !streaming) return null;
-
-  const tokensStr = stats ? `${stats.tokens} tokens` : "";
-  const timeStr = stats ? `${(stats.durationMs / 1000).toFixed(1)}s` : "";
-  const statusText = streaming
-    ? "思考中..."
-    : stats
-      ? [tokensStr, timeStr].filter(Boolean).join(" · ")
-      : "";
-
-  return (
-    <div className={`thinking-block ${streaming ? "thinking-streaming" : ""}`}>
-      <div className="thinking-header" onClick={() => setCollapsed(!collapsed)}>
-        <span className="thinking-icon">🧠</span>
-        <span className="thinking-label">深度思考</span>
-        {statusText && <span className="thinking-stats">{statusText}</span>}
-        <span className={`thinking-chevron ${collapsed ? "collapsed" : ""}`}>▾</span>
-      </div>
-      {!collapsed && (
-        <div className="thinking-content">
-          {thinking ? (
-            <pre className="thinking-text">{thinking}</pre>
-          ) : (
-            <span className="thinking-loading">⏳ 正在思考...</span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** 工具调用步骤展示（连接 MCP 工具时显示 AI 调用的工具与结果） */
-function ToolSteps({
-  steps,
-}: {
-  steps: {
-    name: string;
-    args: string;
-    status: "running" | "done" | "error";
-    result?: string;
-    errorCode?: string | null;
-    errorCategory?: string | null;
-  }[];
-}) {
-  return (
-    <div className="tool-steps">
-      {steps.map((s, i) => {
-        const isError = s.status === "error";
-        const errorInfo = isError ? getMcpErrorInfo(s.errorCode) : null;
-        // 运行中 or 成功 or 失败
-        return (
-          <div key={i} className={`tool-step ${s.status}`}>
-            <span className="tool-step-icon">
-              {s.status === "running" ? "⏳" : isError ? (errorInfo?.icon || "❌") : "✅"}
-            </span>
-            <span className="tool-step-name">{s.name}</span>
-            {isError && errorInfo && (
-              <span className="tool-step-error" title={errorInfo.action}>
-                [{errorInfo.code}] {errorInfo.message}
-              </span>
-            )}
-            {s.result && !isError && (
-              <span className="tool-step-result">{s.result.slice(0, 240)}</span>
-            )}
-            {isError && s.result && (
-              <span className="tool-step-result tool-step-result-error">
-                {s.result.slice(0, 240)}
-              </span>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ conversationId }, ref) {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
@@ -138,18 +42,11 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
   const shouldAutoScroll = useRef(true);
 
   // 工具调用步骤（MCP tool-call / tool-result 事件驱动，瞬时展示，不进 store）
-  const [toolSteps, setToolSteps] = useState<{
-    name: string;
-    args: string;
-    status: "running" | "done" | "error";
-    result?: string;
-    errorCode?: string | null;
-    errorCategory?: string | null;
-  }[]>([]);
+  const [toolSteps, setToolSteps] = useState<ToolStep[]>([]);
 
   // 思考状态（thinking-start/delta/stop 事件驱动）
   const [thinkingContent, setThinkingContent] = useState("");
-  const [thinkingStats, setThinkingStats] = useState<{ tokens: number; durationMs: number } | undefined>();
+  const [thinkingStats, setThinkingStats] = useState<ThinkingStats | undefined>();
   const [isThinking, setIsThinking] = useState(false);
 
   // 暴露方法给父组件（快捷键用）
@@ -319,6 +216,12 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
       setIsLoading(false);
     });
 
+    // agent 多轮结束、进入面向用户的最终答案阶段：停止思考态，后续 stream-token 即正式答案
+    const unlistenFinal = await listen("final-answer-start", () => {
+      if (cancelledRef.current) return;
+      setIsThinking(false);
+    });
+
     const unlisten3 = await listen("stream-done", () => {
       if (thinkingContent && conversationId) {
         // 写入最终 thinking 内容到 message
@@ -344,6 +247,7 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     unlisten1();
     unlisten2();
     unlisten3();
+    unlistenFinal();
     unlistenTc();
     unlistenTr();
     unlistenThinkStart();
@@ -608,46 +512,27 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
             ref={messagesContainerRef}
             onScroll={handleScroll}
           >
-            {currentMessages.map((msg) => (
-              <div key={msg.id} className={`message message-${msg.role}`}>
-                <div className="message-avatar">
-                  {msg.role === "user" ? "👤" : "🤖"}
-                </div>
-                <div className="message-content">
-                  {/* 思考过程（仅 assistant 有 thinking 数据时显示） */}
-                  {msg.role === "assistant" && (msg.thinking || (isLoading && msg === currentMessages[currentMessages.length - 1] && thinkingContent)) && (
-                    <ThinkingBlock
-                      thinking={
-                        msg.thinking ||
-                        (msg === currentMessages[currentMessages.length - 1] ? thinkingContent : "")
-                      }
-                      stats={msg.thinkingStats}
-                      streaming={
-                        isLoading &&
-                        msg === currentMessages[currentMessages.length - 1] &&
-                        isThinking
-                      }
-                    />
-                  )}
-                  <div className={`message-bubble ${msg.role === "assistant" ? "message-bubble-markdown" : ""}`}>
-                    {msg.role === "assistant" ? (
-                      msg.content ? (
-                        <SafeMarkdown content={msg.content} />
-                      ) : isLoading && msg === currentMessages[currentMessages.length - 1] ? (
-                        <span className="thinking-text">{t("chat.thinking")}</span>
-                      ) : null
-                    ) : (
-                      msg.content
-                    )}
+            {currentMessages.map((msg, idx) => {
+              const isLast = msg === currentMessages[currentMessages.length - 1];
+              return (
+                <div key={msg.id} className={`message message-${msg.role}`}>
+                  <div className="message-avatar">
+                    {msg.role === "user" ? "👤" : "🤖"}
                   </div>
+                  <MessageContent
+                    role={msg.role}
+                    content={msg.content}
+                    storedThinking={msg.thinking}
+                    thinkingStats={msg.thinkingStats}
+                    isLoading={isLoading}
+                    isLastMessage={isLast}
+                    streamingThinking={thinkingContent}
+                    isThinking={isThinking}
+                    toolSteps={toolSteps.length > 0 ? toolSteps : undefined}
+                  />
                 </div>
-              </div>
-            ))}
-            {toolSteps.length > 0 && (
-              <div className="message message-tool-steps">
-                <ToolSteps steps={toolSteps} />
-              </div>
-            )}
+              );
+            })}
             <div ref={messagesEndRef} />
           </div>
 

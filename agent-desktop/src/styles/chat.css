@@ -205,26 +205,63 @@
   border-radius: var(--radius, 8px);
   background: var(--bg-secondary);
   overflow: hidden;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 .thinking-block.thinking-streaming {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.1);
 }
+
+/* Header */
 .thinking-header {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   padding: 8px 12px;
   cursor: pointer;
   user-select: none;
   font-size: 13px;
   color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  text-align: left;
+  font-family: inherit;
   transition: background 0.15s;
 }
 .thinking-header:hover {
   background: var(--bg-hover, rgba(255, 255, 255, 0.04));
 }
+.thinking-header:active {
+  transform: scale(0.99);
+}
+
+/* Shimmer 闪光动画（流式时） */
+.thinking-header.thinking-header-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.thinking-header.thinking-header-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(99, 102, 241, 0.08) 25%,
+    rgba(129, 140, 248, 0.15) 50%,
+    rgba(99, 102, 241, 0.08) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 .thinking-icon {
   font-size: 14px;
 }
@@ -242,16 +279,64 @@
   font-size: 12px;
   transition: transform 0.2s;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 .thinking-chevron.collapsed {
   transform: rotate(-90deg);
 }
+
+/* Content wrapper（可折叠，带动画） */
+.thinking-content-wrapper {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.25s ease;
+}
+.thinking-content-wrapper.thinking-content-collapsed {
+  grid-template-rows: 0fr;
+}
+
+/* 滚动内容区 */
 .thinking-content {
-  padding: 0 12px 10px;
-  max-height: 300px;
+  overflow: hidden;
+  position: relative;
+  max-height: 360px;
   overflow-y: auto;
 }
-.thinking-content .thinking-text {
+.thinking-content-wrapper.thinking-content-collapsed .thinking-content {
+  padding: 0 12px;
+}
+
+/* 实际内容 padding */
+.thinking-content {
+  padding: 0 12px 10px;
+}
+
+/* Markdown 在思考面板中的样式 */
+.thinking-markdown {
+  padding: 8px;
+  background: var(--bg-primary, rgba(0, 0, 0, 0.1));
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.thinking-markdown .markdown-body {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.thinking-markdown .markdown-body h1 { font-size: 1.2em; margin: 0.3em 0; }
+.thinking-markdown .markdown-body h2 { font-size: 1.1em; margin: 0.3em 0; }
+.thinking-markdown .markdown-body h3 { font-size: 1.05em; margin: 0.2em 0; }
+.thinking-markdown .markdown-body pre {
+  font-size: 11px;
+  padding: 8px;
+}
+.thinking-markdown .markdown-body code {
+  font-size: 11px;
+}
+
+/* 纯文本降级显示 */
+.thinking-fallback-text {
   margin: 0;
   padding: 8px;
   background: var(--bg-primary, rgba(0, 0, 0, 0.1));
@@ -265,6 +350,23 @@
   max-height: 250px;
   overflow-y: auto;
 }
+
+/* 流式预览模式：底部渐变遮罩 */
+.thinking-fade-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 12px;
+  right: 12px;
+  height: 40px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--bg-secondary) 100%
+  );
+  pointer-events: none;
+  border-radius: 0 0 4px 4px;
+}
+
 .thinking-loading {
   display: block;
   padding: 12px 0;

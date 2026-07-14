@@ -8,6 +8,7 @@ import SkillsPanel from "./settings/SkillsPanel";
 import PluginsPanel from "./settings/PluginsPanel";
 import RagPanel from "./settings/RagPanel";
 import AboutPanel from "./settings/AboutPanel";
+import PetPanel from "./settings/PetPanel";
 import {
   SettingsIcon,
   MonitorIcon,
@@ -18,13 +19,14 @@ import {
   PackageIcon,
   ExtensionIcon,
   DatabaseIcon,
+  PawIcon,
 } from "../components/Icons";
 
 interface SettingsPageProps {
   onClose?: () => void;
 }
 
-type SettingsSection = "general" | "models" | "shortcuts" | "tools" | "skills" | "plugins" | "rag" | "about";
+type SettingsSection = "general" | "models" | "shortcuts" | "tools" | "skills" | "plugins" | "rag" | "pet" | "about";
 
 export default function SettingsPage({ onClose }: SettingsPageProps) {
   const { t } = useTranslation();
@@ -38,6 +40,7 @@ export default function SettingsPage({ onClose }: SettingsPageProps) {
     { id: "skills",    label: t("settings.sections.skills"),    icon: <PackageIcon size={18} /> },
     { id: "plugins",   label: t("settings.sections.plugins"),   icon: <ExtensionIcon size={18} /> },
     { id: "rag",       label: t("settings.sections.rag"),       icon: <DatabaseIcon size={18} /> },
+    { id: "pet",       label: t("settings.sections.pet"),       icon: <PawIcon size={18} /> },
     { id: "about",     label: t("settings.sections.about"),     icon: <HelpIcon size={18} /> },
   ];
 
@@ -50,6 +53,7 @@ export default function SettingsPage({ onClose }: SettingsPageProps) {
       case "skills":    return <SkillsPanel />;
       case "plugins":   return <PluginsPanel />;
       case "rag":       return <RagPanel />;
+      case "pet":       return <PetPanel />;
       case "about":     return <AboutPanel />;
     }
   };

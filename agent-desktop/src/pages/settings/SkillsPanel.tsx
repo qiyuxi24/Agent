@@ -29,10 +29,9 @@ interface SkillMarketEntry {
   download_url: string;
   size_bytes: number;
   installed: boolean;
-  source: string;           // "clawhub" | "local"
-  downloads: number;        // ClawHub 下载量
-  stars: number;            // ClawHub 星标数
-  external_install: boolean; // 需通过 clawhub CLI 安装
+  source: string;           // "github" | "local"
+  downloads: number;
+  stars: number;
 }
 
 const CATEGORIES = ["all", "frontend", "backend", "ai", "mcp", "research", "tools", "general"] as const;
@@ -152,33 +151,19 @@ export default function SkillsPanel() {
     }
   };
 
-  // 安装
+  // 安装：直接从 download_url 下载整个 Skill 目录到应用数据目录
   const installSkill = async (entry: SkillMarketEntry) => {
     setInstallingId(entry.id);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
 
-      if (entry.external_install) {
-        // ClawHub 技能：尝试通过 CLI 安装
-        try {
-          const result = await invoke<string>("skills_clawhub_install", { id: entry.id });
-          console.log("[skills] ClawHub install:", result);
-        } catch (cliErr: any) {
-          // CLI 不可用，复制安装命令到剪贴板
-          const cmd = `npm i -g clawhub && clawhub login && clawhub skill install ${entry.id}`;
-          try {
-            await navigator.clipboard.writeText(cmd);
-            alert(`${t("settings.skills.installFailed")}: ${cliErr}\n\n安装命令已复制到剪贴板:\n${cmd}`);
-          } catch {
-            alert(`${t("settings.skills.installFailed")}: ${cliErr}\n\n请在终端运行:\n${cmd}`);
-          }
-          setInstallingId(null);
-          return;
-        }
-      } else {
-        // 本地技能：直接下载 SKILL.md
-        await invoke("skills_install", { id: entry.id, downloadUrl: entry.download_url });
+      if (!entry.download_url) {
+        alert(`${t("settings.skills.installFailed")}: 该技能缺少下载地址`);
+        setInstallingId(null);
+        return;
       }
+
+      await invoke("skills_install", { id: entry.id, downloadUrl: entry.download_url });
 
       setMarket((prev) =>
         prev.map((e) => (e.id === entry.id ? { ...e, installed: true } : e)),
@@ -429,18 +414,13 @@ export default function SkillsPanel() {
               <div key={entry.id} className={`skill-card market ${entry.installed ? "installed" : ""}`}>
                 <div className="skill-card-main">
                   <div className="skill-card-icon">
-                    {entry.source === "clawhub" ? <StoreIcon size={20} /> : <SparklesIcon size={20} />}
+                    <SparklesIcon size={20} />
                   </div>
                   <div className="skill-card-info">
                     <div className="skill-card-head">
                       <span className="skill-card-name">{entry.name}</span>
                       <span className="skill-card-version">v{entry.version}</span>
                       <span className="skill-card-cat">{catLabel(entry.category)}</span>
-                      {entry.source === "clawhub" && (
-                        <span className="skill-source-badge" title="来自 ClawHub 技能市场">
-                          ClawHub
-                        </span>
-                      )}
                       {entry.installed && (
                         <span className="skill-installed-badge">
                           <CheckIcon size={12} /> 已安装
@@ -457,11 +437,6 @@ export default function SkillsPanel() {
                       )}
                       {entry.stars > 0 && (
                         <span title="星标">★ {entry.stars}</span>
-                      )}
-                      {entry.external_install && !entry.installed && (
-                        <span className="skill-external-hint" title="需通过 ClawHub CLI 安装">
-                          CLI 安装
-                        </span>
                       )}
                     </div>
                   </div>

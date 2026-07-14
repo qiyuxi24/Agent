@@ -1,4 +1,4 @@
-# Agent Desktop
+# Votek
 
 > AI Agent 桌面平台 — Chat 对话、Agent 工具调用、IDE 编程、RAG 知识库，一站式 AI 工作台。
 

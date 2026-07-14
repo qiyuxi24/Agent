@@ -1,23 +1,28 @@
 // Skills 管理模块
-// - 扫描本地 .codebuddy/skills/ 目录
+// - 扫描本地 .codebuddy/skills/ 目录（内置/开发期技能）
 // - 启用/禁用 skill（通过 .disabled 标记）
-// - ClawHub 市场 API 集成（主数据源）
-// - GitHub raw 下载作为安装方式
+// - 市场来源：GitHub 搜索 + 本仓库托管的 skills（均可直连下载，无需外部 CLI）
+// - 安装的技能存放于应用数据目录，由 Agent 的 LLM 在对话时注入 system prompt
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use tauri::AppHandle;
+use tauri::Manager;
 
-/// Skills 根目录（相对于项目根目录的 .codebuddy/skills/）
+/// 内置/开发期 Skills 目录（相对工作目录的 .codebuddy/skills/）
 const SKILLS_DIR: &str = ".codebuddy/skills";
+/// 用户从市场安装的 Skills 存放目录名（位于应用数据目录下，不混入源码树）
+const INSTALLED_SKILLS_DIR: &str = "skills";
 
-/// ClawHub API 地址
-const CLAWHUB_API: &str = "https://clawhub.ai/api/v1/skills";
+/// 技能仓库（用于远程 market.json 与内置市场兜底）
+const SKILLS_REPO: &str = "346379/Agent";
+
+/// 单个技能允许的最大体积（下载上限，防止异常大文件撑爆磁盘）
+const MAX_SKILL_BYTES: u64 = 5 * 1024 * 1024;
 
 /// 单个 Skill 的描述信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,56 +65,9 @@ pub struct SkillMarketEntry {
     /// ClawHub 星标数
     #[serde(default)]
     pub stars: u64,
-    /// 是否需要通过 clawhub CLI 安装
-    #[serde(default)]
-    pub external_install: bool,
 }
 
 fn default_source() -> String { "local".into() }
-
-/// ClawHub API 返回的技能条目
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct ClawHubSkill {
-    slug: String,
-    #[serde(rename = "displayName")]
-    display_name: String,
-    summary: String,
-    description: Option<String>,
-    #[serde(default)]
-    topics: Vec<String>,
-    tags: Option<serde_json::Value>,
-    stats: Option<ClawHubStats>,
-    #[serde(rename = "latestVersion")]
-    latest_version: Option<ClawHubVersion>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct ClawHubStats {
-    #[serde(default)]
-    downloads: u64,
-    #[serde(default)]
-    installs: u64,
-    #[serde(default)]
-    stars: u64,
-    #[serde(default)]
-    versions: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct ClawHubVersion {
-    version: String,
-}
-
-/// ClawHub API 分页响应
-#[derive(Debug, Deserialize)]
-struct ClawHubResponse {
-    items: Vec<ClawHubSkill>,
-    #[serde(rename = "nextCursor")]
-    #[allow(dead_code)]
-    next_cursor: Option<String>,
-}
 
 /// 获取 skills 根目录路径
 fn skills_dir(_app: &AppHandle) -> PathBuf {
@@ -132,6 +90,43 @@ fn skills_dir(_app: &AppHandle) -> PathBuf {
 
     // 最后回退到 cwd（即使不存在）
     cwd_path
+}
+
+/// 用户从市场安装的 Skills 目录（位于应用数据目录下，不混入源码树 .codebuddy）
+fn installed_skills_dir(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_data_dir()
+        .map(|p| p.join(INSTALLED_SKILLS_DIR))
+        .unwrap_or_else(|_| skills_dir(app))
+}
+
+/// 所有需要扫描的 skills 目录：内置/开发期目录 + 用户安装目录
+fn all_skill_dirs(app: &AppHandle) -> Vec<PathBuf> {
+    let mut dirs = vec![skills_dir(app), installed_skills_dir(app)];
+    dirs.dedup();
+    dirs
+}
+
+/// 扫描单个目录，返回其中的 Skill 列表
+fn scan_skill_dir(dir: &PathBuf) -> Vec<SkillInfo> {
+    let mut skills = Vec::new();
+    if !dir.exists() {
+        return skills;
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let skill_md = path.join("SKILL.md");
+                if skill_md.exists() {
+                    if let Some(info) = parse_skill_md(&skill_md) {
+                        skills.push(info);
+                    }
+                }
+            }
+        }
+    }
+    skills
 }
 
 /// 解析 SKILL.md 的 YAML frontmatter，提取元信息
@@ -247,37 +242,37 @@ fn dir_size(path: &std::path::Path) -> u64 {
 /// 获取所有已启用 Skill 的合并 system prompt（供 chat_stream 注入）
 /// 返回的是纯文本，可直接作为 system message 的 content
 pub fn get_active_system_prompt(app: &AppHandle) -> String {
-    let dir = skills_dir(app);
-    if !dir.exists() {
-        return String::new();
-    }
-
     let mut prompts: Vec<String> = Vec::new();
-    if let Ok(entries) = fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            // 跳过被禁用的
-            if path.join(".disabled").exists() {
-                continue;
-            }
-            let skill_md = path.join("SKILL.md");
-            if !skill_md.exists() {
-                continue;
-            }
-            let content = match fs::read_to_string(&skill_md) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            // 去掉 YAML frontmatter，只保留正文内容
-            let body = strip_frontmatter(&content);
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
-            if !body.trim().is_empty() {
-                prompts.push(format!(
-                    "## Skill: {name}\n{body}"
-                ));
+    for dir in all_skill_dirs(app) {
+        if !dir.exists() {
+            continue;
+        }
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                // 跳过被禁用的
+                if path.join(".disabled").exists() {
+                    continue;
+                }
+                let skill_md = path.join("SKILL.md");
+                if !skill_md.exists() {
+                    continue;
+                }
+                let content = match fs::read_to_string(&skill_md) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                // 去掉 YAML frontmatter，只保留正文内容
+                let body = strip_frontmatter(&content);
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+                if !body.trim().is_empty() {
+                    prompts.push(format!(
+                        "## Skill: {name}\n{body}"
+                    ));
+                }
             }
         }
     }
@@ -306,41 +301,29 @@ fn strip_frontmatter(content: &str) -> String {
 
 // ===================== Tauri 命令 =====================
 
-/// 列出本地已安装的所有 Skills
+/// 列出本地已安装的所有 Skills（内置目录 + 用户安装目录，按 id 去重）
 #[tauri::command]
 pub fn skills_list(app: AppHandle) -> Result<Vec<SkillInfo>, String> {
-    let dir = skills_dir(&app);
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut skills = Vec::new();
-    if let Ok(entries) = fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let skill_md = path.join("SKILL.md");
-                if skill_md.exists() {
-                    if let Some(info) = parse_skill_md(&skill_md) {
-                        skills.push(info);
-                    }
-                }
-            }
+    let mut by_id: std::collections::HashMap<String, SkillInfo> = std::collections::HashMap::new();
+    for dir in all_skill_dirs(&app) {
+        for skill in scan_skill_dir(&dir) {
+            // 用户安装目录优先（后写覆盖先写）
+            by_id.insert(skill.id.clone(), skill);
         }
     }
+
+    let mut skills: Vec<SkillInfo> = by_id.into_values().collect();
 
     // 按分类排序
     skills.sort_by(|a, b| a.category.cmp(&b.category).then(a.id.cmp(&b.id)));
     Ok(skills)
 }
 
-/// 启用或禁用一个 Skill
+/// 启用或禁用一个 Skill（在内置或安装目录中查找）
 #[tauri::command]
 pub fn skills_toggle(app: AppHandle, id: String, enabled: bool) -> Result<(), String> {
-    let dir = skills_dir(&app).join(&id);
-    if !dir.exists() {
-        return Err(format!("Skill '{}' 未找到", id));
-    }
+    let dir = find_skill_dir(&app, &id)
+        .ok_or_else(|| format!("Skill '{}' 未找到", id))?;
 
     let marker = dir.join(".disabled");
     if enabled {
@@ -354,124 +337,75 @@ pub fn skills_toggle(app: AppHandle, id: String, enabled: bool) -> Result<(), St
     Ok(())
 }
 
-/// 获取 Skills 市场列表（优先 ClawHub API → GitHub 搜索 → 本地 market.json）
+/// 在全部 skills 目录中查找指定 id 的目录
+fn find_skill_dir(app: &AppHandle, id: &str) -> Option<PathBuf> {
+    for dir in all_skill_dirs(app) {
+        let candidate = dir.join(id);
+        if candidate.join("SKILL.md").exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// 市场数据源：每个 provider 返回一组市场条目（单个源失败不影响其它源）
+type MarketFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<SkillMarketEntry>, String>> + Send>>;
+type MarketProvider = fn() -> MarketFuture;
+
+/// 获取 Skills 市场列表（多数据源合并：GitHub 搜索 → 远程 market.json → 内置兜底）
 #[tauri::command]
 pub async fn skills_market_list() -> Result<Vec<SkillMarketEntry>, String> {
-    let mut entries: Vec<SkillMarketEntry> = Vec::new();
-    let mut has_clawhub = false;
+    let providers: Vec<MarketProvider> = vec![market_github, market_local];
 
-    // 1. 尝试从 ClawHub API 获取市场数据
-    let clawhub_url = format!("{CLAWHUB_API}?limit=30");
-    match reqwest::get(&clawhub_url).await {
-        Ok(resp) if resp.status().is_success() => {
-            match resp.json::<ClawHubResponse>().await {
-                Ok(data) => {
-                    has_clawhub = true;
-                    for skill in data.items {
-                        entries.push(clawhub_to_entry(&skill));
+    let mut merged: Vec<SkillMarketEntry> = Vec::new();
+    let mut has_online = false;
+
+    for provider in providers {
+        match provider().await {
+            Ok(items) => {
+                if !items.is_empty() {
+                    has_online = true;
+                }
+                // 同 id 不重复（先到先得，在线源优先于兜底）
+                for item in items {
+                    if !merged.iter().any(|e| e.id == item.id) {
+                        merged.push(item);
                     }
-                    eprintln!("[skills] ClawHub: 获取到 {} 个技能", entries.len());
-                }
-                Err(e) => {
-                    eprintln!("[skills] ClawHub 解析失败: {}", e);
                 }
             }
-        }
-        Ok(resp) => {
-            eprintln!("[skills] ClawHub 返回状态: {}", resp.status());
-        }
-        Err(e) => {
-            eprintln!("[skills] ClawHub 请求失败: {}", e);
+            Err(e) => eprintln!("[skills] 市场数据源失败: {e}"),
         }
     }
 
-    // 2. GitHub 搜索补充（topic:codebuddy-skill + topic:claude-skill）
-    match fetch_github_skills().await {
-        Ok(github_skills) => {
-            let existing_ids: HashSet<String> = entries.iter().map(|e| e.id.clone()).collect();
-            let mut added = 0;
-            for skill in github_skills {
-                if !existing_ids.contains(&skill.id) {
-                    entries.push(skill);
-                    added += 1;
-                }
+    // 全部在线源失败时才用内置兜底列表（保证离线可用）
+    if !has_online {
+        for item in builtin_market() {
+            if !merged.iter().any(|e| e.id == item.id) {
+                merged.push(item);
             }
-            if added > 0 {
-                has_clawhub = true; // 有在线数据
-                eprintln!("[skills] GitHub: {} 个新技能", added);
-            }
-        }
-        Err(e) => {
-            eprintln!("[skills] GitHub 搜索失败: {}", e);
         }
     }
-
-    // 3. 合并本地 market.json（补充在线源中没有的技能）
-    let local = if has_clawhub {
-        match fetch_local_market().await {
-            Ok(local_entries) => {
-                // 只保留 ClawHub 中没有的技能
-                let clawhub_ids: HashSet<String> =
-                    entries.iter().map(|e| e.id.clone()).collect();
-                local_entries
-                    .into_iter()
-                    .filter(|e| !clawhub_ids.contains(&e.id))
-                    .collect()
-            }
-            Err(_) => Vec::new(),
-        }
-    } else {
-        // ClawHub 不可用，直接用本地数据
-        match fetch_local_market().await {
-            Ok(local_entries) => local_entries,
-            Err(_) => builtin_market(),
-        }
-    };
-
-    entries.extend(local);
 
     // 按下载量降序排列
-    entries.sort_by(|a, b| b.downloads.cmp(&a.downloads));
-
-    Ok(entries)
+    merged.sort_by(|a, b| b.downloads.cmp(&a.downloads));
+    Ok(merged)
 }
 
-/// 将 ClawHub API 条目转为统一的 SkillMarketEntry
-fn clawhub_to_entry(skill: &ClawHubSkill) -> SkillMarketEntry {
-    let stats = skill.stats.as_ref();
-    let version = skill
-        .latest_version
-        .as_ref()
-        .map(|v| v.version.clone())
-        .unwrap_or_else(|| "0.1.0".into());
-
-    // 尝试从 description 或 topic 推断分类
-    let category = infer_category(&skill.slug, &skill.topics);
-
-    // ClawHub 技能没有直接下载 URL，标记为 external_install
-    let download_url = String::new();
-
-    SkillMarketEntry {
-        id: skill.slug.clone(),
-        name: skill.display_name.clone(),
-        description_zh: skill
-            .description
-            .clone()
-            .unwrap_or_else(|| skill.summary.clone()),
-        description_en: skill.summary.clone(),
-        version,
-        category,
-        download_url,
-        size_bytes: 0,
-        installed: false,
-        source: "clawhub".into(),
-        downloads: stats.map(|s| s.downloads).unwrap_or(0),
-        stars: stats.map(|s| s.stars).unwrap_or(0),
-        external_install: true,
-    }
+/// 数据源 1：GitHub 主题搜索
+fn market_github() -> MarketFuture {
+    Box::pin(async move { fetch_github_skills().await })
 }
 
-/// 根据 slug 和 topics 推断分类
+/// 数据源 2：远程 market.json（仓库内维护的索引）
+fn market_local() -> MarketFuture {
+    Box::pin(async move { fetch_local_market().await })
+}
+
+
+
+/// 根据 slug 和 topics 推断分类（保留备用）
+#[allow(dead_code)]
 fn infer_category(slug: &str, topics: &[String]) -> String {
     let slug_lower = slug.to_lowercase();
     let topics_str = topics.join(" ").to_lowercase();
@@ -561,7 +495,7 @@ async fn fetch_github_skills() -> Result<Vec<SkillMarketEntry>, String> {
                         source: "github".into(),
                         downloads: 0,
                         stars: repo.stargazers_count,
-                        external_install: false,
+                
                     });
                 }
             }
@@ -575,7 +509,7 @@ async fn fetch_github_skills() -> Result<Vec<SkillMarketEntry>, String> {
 /// 从远程 GitHub 获取本地 market.json
 async fn fetch_local_market() -> Result<Vec<SkillMarketEntry>, String> {
     let market_url =
-        "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills/market.json";
+        format!("https://raw.githubusercontent.com/{SKILLS_REPO}/main/.codebuddy/skills/market.json");
     let resp = reqwest::get(market_url)
         .await
         .map_err(|e| format!("网络请求失败: {e}"))?;
@@ -587,7 +521,8 @@ async fn fetch_local_market() -> Result<Vec<SkillMarketEntry>, String> {
         .map_err(|e| format!("JSON 解析失败: {e}"))
 }
 
-/// 通过 ClawHub CLI 安装技能
+/// 通过 ClawHub CLI 安装技能（保留备用，当前市场不再使用 ClawHub 源）
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn skills_clawhub_install(id: String) -> Result<String, String> {
     // 尝试运行 clawhub CLI 安装
@@ -620,73 +555,197 @@ pub async fn skills_clawhub_install(id: String) -> Result<String, String> {
     }
 }
 
-/// 从 GitHub 下载并安装一个 Skill
+/// 从 GitHub(raw URL) 下载并安装一个 Skill（递归下载整个目录，支持 main/master 分支回退）
 #[tauri::command]
 pub async fn skills_install(app: AppHandle, id: String, download_url: String) -> Result<(), String> {
-    let dir = skills_dir(&app).join(&id);
+    if download_url.is_empty() {
+        return Err("该技能缺少下载地址，无法安装".into());
+    }
+
+    let (owner, repo, branch, subpath) = parse_raw_github_url(&download_url)
+        .ok_or_else(|| format!("无法解析下载地址: {download_url}"))?;
+
+    let dir = installed_skills_dir(&app).join(&id);
 
     // 如果已存在，先备份再覆盖
     if dir.exists() {
-        let backup = skills_dir(&app).join(format!("{}.bak", id));
-        if backup.exists() {
-            fs::remove_dir_all(&backup).ok();
-        }
+        let backup = installed_skills_dir(&app).join(format!("{}.bak", id));
+        let _ = fs::remove_dir_all(&backup);
         fs::rename(&dir, &backup).map_err(|e| format!("备份失败: {}", e))?;
     }
-
     fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {}", e))?;
 
-    // 下载 SKILL.md
-    let skill_md_url = if download_url.ends_with('/') {
-        format!("{}SKILL.md", download_url)
-    } else {
-        format!("{}/SKILL.md", download_url)
+    let client = github_client();
+
+    // 主分支尝试；404 时回退 master
+    let result = install_from_github(&client, &owner, &repo, &branch, &subpath, &dir).await;
+    let result = match result {
+        Err(e) if e == "NOT_FOUND" && branch == "main" => {
+            install_from_github(&client, &owner, &repo, "master", &subpath, &dir)
+                .await
+                .map_err(|e2| format!("{e}（已尝试 master 分支: {e2}）"))
+        }
+        other => other,
     };
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&skill_md_url)
-        .send()
-        .await
-        .map_err(|e| format!("下载 SKILL.md 失败: {}", e))?;
-
-    if !resp.status().is_success() {
-        // 清理已创建的空目录
+    if let Err(e) = result {
         let _ = fs::remove_dir_all(&dir);
-        return Err(format!("SKILL.md 不存在 (HTTP {})", resp.status()));
+        return Err(e);
     }
 
-    let content = resp
-        .text()
-        .await
-        .map_err(|e| format!("读取内容失败: {}", e))?;
-
-    fs::write(dir.join("SKILL.md"), content).map_err(|e| format!("写入失败: {}", e))?;
-
-    // 尝试下载可选的 README.md
-    let readme_url = if download_url.ends_with('/') {
-        format!("{}README.md", download_url)
-    } else {
-        format!("{}/README.md", download_url)
-    };
-
-    if let Ok(resp) = client.get(&readme_url).send().await {
-        if resp.status().is_success() {
-            if let Ok(text) = resp.text().await {
-                let _ = fs::write(dir.join("README.md"), text);
-            }
-        }
+    // 校验：必须是有效 Skill（含 SKILL.md）
+    if !dir.join("SKILL.md").exists() {
+        let _ = fs::remove_dir_all(&dir);
+        return Err("下载的内容不是有效 Skill（缺少 SKILL.md）".into());
     }
 
     Ok(())
 }
 
-/// 删除本地 Skill
+/// 解析 raw.githubusercontent.com 目录 URL -> (owner, repo, branch, subpath)
+fn parse_raw_github_url(url: &str) -> Option<(String, String, String, String)> {
+    let path = url
+        .strip_prefix("https://raw.githubusercontent.com/")
+        .or_else(|| url.strip_prefix("http://raw.githubusercontent.com/"))?;
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let owner = parts[0].to_string();
+    let repo = parts[1].to_string();
+    let branch = parts[2].to_string();
+    let subpath = if parts.len() > 3 {
+        parts[3..].join("/")
+    } else {
+        String::new()
+    };
+    Some((owner, repo, branch, subpath))
+}
+
+/// 构造带超时与 UA 的 GitHub HTTP 客户端
+fn github_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent("votek/0.1")
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+/// 从 GitHub 下载整个 skill 目录到 dest；404 时返回 Err("NOT_FOUND")
+async fn install_from_github(
+    client: &reqwest::Client,
+    owner: &str,
+    repo: &str,
+    branch: &str,
+    subpath: &str,
+    dest: &PathBuf,
+) -> Result<(), String> {
+    let api_url = if subpath.is_empty() {
+        format!("https://api.github.com/repos/{owner}/{repo}/contents?ref={branch}")
+    } else {
+        format!(
+            "https://api.github.com/repos/{owner}/{repo}/contents/{subpath}?ref={branch}"
+        )
+    };
+    fetch_github_contents(client, &api_url, subpath, dest).await?;
+    Ok(())
+}
+
+/// 递归列举并下载 GitHub 目录内容（支持子目录；同 id 文件按相对路径落盘）
+async fn fetch_github_contents(
+    client: &reqwest::Client,
+    api_url: &str,
+    base_subpath: &str,
+    dest: &PathBuf,
+) -> Result<u64, String> {
+    let resp = client
+        .get(api_url)
+        .header(reqwest::header::ACCEPT, "application/vnd.github.v3+json")
+        .send()
+        .await
+        .map_err(|e| format!("列出目录失败: {e}"))?;
+
+    if resp.status() == 404 {
+        return Err("NOT_FOUND".into());
+    }
+    if !resp.status().is_success() {
+        return Err(format!("GitHub 目录列表失败 (HTTP {})", resp.status()));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct GHEntry {
+        #[serde(rename = "type")]
+        ty: String,
+        path: String,
+        #[serde(default)]
+        download_url: Option<String>,
+        #[serde(default)]
+        url: Option<String>,
+    }
+
+    let entries: Vec<GHEntry> = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析目录失败: {e}"))?;
+
+    let mut total: u64 = 0;
+    for entry in entries {
+        // 相对目标路径：相对于当前目录的 base_subpath 计算
+        let rel = if base_subpath.is_empty() {
+            entry.path.clone()
+        } else {
+            entry
+                .path
+                .strip_prefix(&format!("{base_subpath}/"))
+                .unwrap_or(&entry.path)
+                .to_string()
+        };
+
+        if entry.ty == "dir" {
+            let dir_dest = dest.join(&rel);
+            let _ = fs::create_dir_all(&dir_dest);
+            // 递归时以当前目录的完整路径作为新的 base
+            if let Some(url) = entry.url {
+                total += Box::pin(fetch_github_contents(
+                    client,
+                    &url,
+                    &entry.path,
+                    &dir_dest,
+                ))
+                .await?;
+            }
+        } else if entry.ty == "file" {
+            if let Some(dl) = entry.download_url {
+                let bytes = client
+                    .get(&dl)
+                    .send()
+                    .await
+                    .map_err(|e| format!("下载 {} 失败: {}", entry.path, e))?
+                    .bytes()
+                    .await
+                    .map_err(|e| format!("读取 {} 失败: {}", entry.path, e))?;
+                total += bytes.len() as u64;
+                if total > MAX_SKILL_BYTES {
+                    return Err("技能体积超过 5MB 上限".into());
+                }
+                let out = dest.join(&rel);
+                if let Some(p) = out.parent() {
+                    let _ = fs::create_dir_all(p);
+                }
+                fs::write(&out, &bytes)
+                    .map_err(|e| format!("写入 {} 失败: {}", entry.path, e))?;
+            }
+        }
+    }
+    Ok(total)
+}
+
+/// 删除本地 Skill（仅允许删除用户安装的技能）
 #[tauri::command]
 pub fn skills_delete(app: AppHandle, id: String) -> Result<(), String> {
-    let dir = skills_dir(&app).join(&id);
+    let dir = installed_skills_dir(&app).join(&id);
     if !dir.exists() {
-        return Err(format!("Skill '{}' 未找到", id));
+        return Err(format!("Skill '{}' 未找到（仅用户安装的技能可删除）", id));
     }
 
     fs::remove_dir_all(&dir).map_err(|e| format!("删除失败: {}", e))?;
@@ -702,22 +761,21 @@ pub fn skills_preview_prompt(app: AppHandle) -> Result<String, String> {
 /// 打开 SKILL.md 文件（返回内容供前端预览）
 #[tauri::command]
 pub fn skills_read_content(app: AppHandle, id: String) -> Result<String, String> {
-    let path = skills_dir(&app).join(&id).join("SKILL.md");
-    if !path.exists() {
-        return Err(format!("Skill '{}' 的 SKILL.md 不存在", id));
-    }
+    let dir = find_skill_dir(&app, &id)
+        .ok_or_else(|| format!("Skill '{}' 的 SKILL.md 不存在", id))?;
+    let path = dir.join("SKILL.md");
     fs::read_to_string(&path).map_err(|e| format!("读取失败: {}", e))
 }
 
 // ===================== 内置市场列表 =====================
 
 fn builtin_market() -> Vec<SkillMarketEntry> {
-    let base = "https://raw.githubusercontent.com/346379/Agent/main/.codebuddy/skills";
+    let base = format!("https://raw.githubusercontent.com/{SKILLS_REPO}/main/.codebuddy/skills");
     let local = || SkillMarketEntry {
         source: "local".into(),
         downloads: 0,
         stars: 0,
-        external_install: false,
+
         // Placeholder fields set below
         id: String::new(),
         name: String::new(),

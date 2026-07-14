@@ -10,7 +10,7 @@
   },
 
   "sidebar": {
-    "appTitle": "Agent Desktop",
+    "appTitle": "Votek",
     "newChat": "新建对话",
     "emptyCantCreate": "当前对话为空，无法新建",
     "chat": "对话",
@@ -59,6 +59,7 @@
       "skills": "Skills",
       "plugins": "插件",
       "rag": "知识库",
+      "pet": "桌宠",
       "about": "关于"
     },
 
@@ -184,8 +185,24 @@
     },
 
     "about": {
-      "version": "Agent Desktop v0.1.0",
+      "version": "Votek v0.1.0",
       "tech": "基于 Tauri v2 + React + Rust 构建"
+    },
+
+    "pet": {
+      "enable": "桌宠开关",
+      "enableDesc": "在桌面右下角显示一个可爱的桌宠伙伴，会根据 AI 对话状态变化表情和动作。",
+      "show": "召唤桌宠",
+      "hide": "隐藏桌宠",
+      "interact": "互动",
+      "pet": "抚摸",
+      "feed": "喂食",
+      "play": "玩耍",
+      "stats": "宠物状态",
+      "mood": "心情",
+      "friendship": "羁绊",
+      "energy": "精力",
+      "daysTogether": "相伴天数"
     },
 
     "rag": {

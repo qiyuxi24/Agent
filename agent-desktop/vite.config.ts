@@ -34,6 +34,11 @@ export default defineConfig({
     minify: "esbuild",
     // 代码分割 — 按依赖类型拆包，减少首屏加载体积
     rollupOptions: {
+      // 多入口：主应用 index.html + 桌宠窗 pet.html
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        pet: path.resolve(__dirname, "pet.html"),
+      },
       output: {
         manualChunks: {
           // UI 框架（稳定，更新频率低）

@@ -39,7 +39,6 @@ dependencies = [
  "tauri-plugin-store",
  "text-splitter",
  "tokio",
- "ureq",
  "url",
  "zip",
 ]

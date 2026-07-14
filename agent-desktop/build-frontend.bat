@@ -46,7 +46,7 @@ echo     2. Or just restart the app (dev mode auto-reloads)
 echo ========================================
 echo.
 
-:: 尝试自动复制到 src-tauri\target\release\ (如果存在)
+REM Try to auto-copy to src-tauri\target\release\ (if it exists)
 set "RELEASE_DIR=src-tauri\target\release"
 if exist "%RELEASE_DIR%\agent-desktop.exe" (
     echo [INFO] Copying dist\ to release folder...

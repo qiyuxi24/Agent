@@ -4,6 +4,7 @@ mod code_server;
 mod error_codes;
 mod ide;
 mod mcp;
+mod pet;
 mod plugins;
 mod rag;
 mod skills;
@@ -33,7 +34,7 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
 const CANCEL_STREAM_KEY: &str = "chat";
 
 /// 统一 User-Agent（从 Cargo.toml 版本号手动同步：搜索 "USER_AGENT" 可找到所有位置）
-pub(crate) const USER_AGENT: &str = "agent-desktop/0.3.0";
+pub(crate) const USER_AGENT: &str = "votek/0.3.0";
 
 /// 复用 reqwest Client（内建连接池），避免每次 LLM 调用重新建立 TCP 连接
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
@@ -120,6 +121,17 @@ pub struct StreamError {
 #[derive(Debug, Clone, Serialize)]
 pub struct StreamDone;
 
+/// LLM 调用失败重试通知：告诉前端清空之前的 token 缓冲，准备接收新一轮流式输出
+#[derive(Debug, Clone, Serialize)]
+pub struct StreamRetry {
+    pub attempt: u32,
+}
+
+/// 最终答案开始：agent 多轮循环结束、进入面向用户的正式回答阶段
+/// （区分「中间轮的推理草稿」与「终止轮的最终答案」，前端可据此收起思考面板）
+#[derive(Debug, Clone, Serialize)]
+pub struct FinalAnswerStart;
+
 /// 思考过程：开始（DeepSeek/Claude 的 reasoning_content 阶段启动）
 #[derive(Debug, Clone, Serialize)]
 pub struct ThinkingStart;
@@ -203,32 +215,28 @@ struct ToolCallAcc {
     arguments: String,
 }
 
-#[tauri::command]
-async fn chat_stream(
-    app: AppHandle,
-    state: tauri::State<'_, AppState>,
-    request: ChatRequest,
-) -> Result<(), String> {
-    // 模式判断：agent = 启用 MCP 工具循环；chat = 纯对话
-    let agent_mode = request.mode == "agent";
-
-    // 仅 agent 模式聚合 MCP 工具；chat 模式传空
+/// 准备 agent loop 上下文：聚合 MCP 工具 + 注入 Skills prompt + 准备 messages。
+/// 不涉及生命周期敏感数据（llm/executor/cancel 由调用方在栈上创建）。
+async fn prepare_loop_messages(
+    app: &AppHandle,
+    mcp: &McpManager,
+    request: &ChatRequest,
+    agent_mode: bool,
+) -> (Vec<ChatMessage>, Vec<Value>) {
     let tools = if agent_mode {
-        state.mcp.llm_tools().await
+        mcp.llm_tools().await
     } else {
         Vec::new()
     };
 
-    // 注入已启用的 Skills 作为 system prompt（仅 agent 模式）
     let skills_prompt = if agent_mode {
-        skills::get_active_system_prompt(&app)
+        skills::get_active_system_prompt(app)
     } else {
         String::new()
     };
     let mut messages = request.messages.clone();
     if !skills_prompt.is_empty() {
         let prompt_len = skills_prompt.len();
-        // 检查是否已有 system 消息，有则替换，无则插入
         if let Some(first) = messages.first_mut() {
             if first.role == "system" {
                 let existing = first.content.clone().unwrap_or_default();
@@ -242,21 +250,33 @@ async fn chat_stream(
         eprintln!("[chat_stream] 已注入 {} 字节的 Skills system prompt", prompt_len);
     }
 
-    // 注册取消信号（供 cancel_chat 命令触发）
+    (messages, tools)
+}
+
+#[tauri::command]
+async fn chat_stream(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: ChatRequest,
+) -> Result<(), String> {
+    let agent_mode = request.mode == "agent";
+
+    // 1. 准备消息和工具
+    let (messages, tools) = prepare_loop_messages(&app, &state.mcp, &request, agent_mode).await;
+
+    // 2. 注册取消信号
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
     {
         let mut streams = state.active_streams.lock().await;
         streams.insert(CANCEL_STREAM_KEY.to_string(), cancel_tx);
     }
 
-    // 组装真实能力并委托给 agent loop 引擎
+    // 3. 组装 agent loop 上下文
     let llm = agent_loop::RealLlmClient {
         app: app.clone(),
         request: request.clone(),
     };
-    let executor = agent_loop::McpToolExecutor {
-        mcp: &state.mcp,
-    };
+    let executor = agent_loop::McpToolExecutor { mcp: &state.mcp };
     let config = agent_loop::AgentLoopConfig {
         max_iterations: if agent_mode { AGENT_MAX_ITERATIONS } else { CHAT_MAX_ITERATIONS },
         agent_mode,
@@ -272,12 +292,20 @@ async fn chat_stream(
         cancel: &mut cancel_rx,
     };
 
+    // 4. 运行 loop + 清理
     let result = agent_loop::run_agent_loop(ctx).await;
     cleanup(&app, &state).await;
     result
 }
 
-/// 调用一次 LLM 流式接口，实时推送文本 token 与思考 token，并收集 tool_calls
+/// 调用一次 LLM 流式接口，实时推送思考 token（reasoning_content），并收集 content / tool_calls
+///
+/// `stream_content` 控制普通 `content` 的实时推送策略（思考链 reasoning_content 始终实时推送）：
+/// - `true`（chat 模式）：content 实时以 `stream-token` 推到答案框（逐字流式）。
+/// - `false`（agent 模式）：content 仅静默累积、不实时 emit；由调用方（agent loop）在判定
+///   本轮是「中间轮」还是「终止轮」后再决定归属——中间轮回放到思考面板，终止轮回放为最终答案。
+///   这样可避免中间轮的推理草稿污染最终答案框。
+///
 /// 返回值：(content, reasoning_content, tool_calls)
 pub(crate) async fn run_completion(
     app: &AppHandle,
@@ -285,6 +313,7 @@ pub(crate) async fn run_completion(
     messages: &[ChatMessage],
     tools: &[Value],
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    stream_content: bool,
 ) -> Result<(String, String, Vec<ToolCall>), String> {
     let url = format!("{}/chat/completions", request.api_base.trim_end_matches('/'));
 
@@ -397,12 +426,16 @@ pub(crate) async fn run_completion(
                                 }
                                 if !token.is_empty() {
                                     content.push_str(token);
-                                    let _ = app.emit(
-                                        "stream-token",
-                                        StreamToken {
-                                            token: token.to_string(),
-                                        },
-                                    );
+                                    // 仅在 stream_content=true（chat 模式）时实时推到答案框；
+                                    // agent 模式静默累积，交由 agent loop 判定归属后回放。
+                                    if stream_content {
+                                        let _ = app.emit(
+                                            "stream-token",
+                                            StreamToken {
+                                                token: token.to_string(),
+                                            },
+                                        );
+                                    }
                                 }
                             }
 
@@ -588,6 +621,7 @@ pub struct AppState {
     active_streams: Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>,
     pub mcp: McpManager,
     pub rag: rag::RagManager,
+    pub pet: pet::PetManager,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -599,6 +633,7 @@ pub fn run() {
             active_streams: Mutex::new(HashMap::new()),
             mcp: McpManager::new(),
             rag: rag::RagManager::new(),
+            pet: pet::PetManager::default(),
         })
         .invoke_handler(tauri::generate_handler![
             chat_stream,
@@ -612,6 +647,7 @@ pub fn run() {
             mcp_health_check,
             mcp_reconnect,
             mcp_clear_cache,
+            mcp::mcp_check_prereq,
             mcp::mcp_market_list,
             // RAG — 检索增强生成
             rag::rag_init,
@@ -639,7 +675,6 @@ pub fn run() {
             skills::skills_install,
             skills::skills_delete,
             skills::skills_read_content,
-            skills::skills_clawhub_install,
             skills::skills_preview_prompt,
             // 插件管理
             plugins::plugins_list,
@@ -667,11 +702,20 @@ pub fn run() {
             code_server::code_server_install,
             code_server::code_server_start,
             code_server::code_server_stop,
+            code_server::code_server_restart,
             code_server::code_server_status,
             code_server::code_server_open_ide_window,
             code_server::code_server_read_logs,
+            // 桌宠
+            pet::toggle_pet,
+            pet::pet_interact,
+            pet::get_pet_stats,
         ])
         .on_window_event(|window, event| {
+            // 仅主窗口关闭时阻止默认行为并清理子进程；宠物窗等其它窗口直接关闭
+            if window.label() != "main" {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // 阻止默认关闭，先清理子进程
                 api.prevent_close();
@@ -712,6 +756,13 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 code_server::start_background(&app_handle).await;
             });
+
+            // 载入持久化的宠物数值
+            {
+                let stats = pet::load_stats(app.handle());
+                let state = app.state::<AppState>();
+                *state.pet.stats.lock().unwrap() = stats;
+            }
 
             #[cfg(dev)]
             {

@@ -108,6 +108,26 @@ export default function ToolsPanel() {
     setError("");
     try {
       const { invoke } = await import("@tauri-apps/api/core");
+
+      // 1) 前置依赖检测（仅对 node/npx 命令）
+      const baseCmd = cfg.command.split(/\s+/)[0].toLowerCase();
+      if (baseCmd === "node" || baseCmd === "npx" || baseCmd === "node.exe" || baseCmd === "npx.cmd") {
+        try {
+          const prereqResults = await invoke<string[]>("mcp_check_prereq", { command: cfg.command });
+          const failed = prereqResults.filter((r) => r.startsWith("✗"));
+          if (failed.length > 0) {
+            setError(`前置依赖检测失败:\n${prereqResults.join("\n")}\n\n请安装 Node.js (v18+) 后重试: https://nodejs.org`);
+            setBusy(false);
+            return;
+          }
+        } catch (e) {
+          setError(`依赖检测失败: ${typeof e === "string" ? e : (e as Error)?.message}`);
+          setBusy(false);
+          return;
+        }
+      }
+
+      // 2) 实际连接
       const env = cfg.env || buildEnvMap() || null;
       await invoke("mcp_connect", {
         config: { name: cfg.name, command: cfg.command, args: cfg.args, env },
@@ -134,28 +154,14 @@ export default function ToolsPanel() {
     connect({ name: name.trim(), command: command.trim(), args: argList });
   };
 
-  // 一键安装推荐 MCP 服务器
+  // 一键安装推荐 MCP 服务器（复用 connect 逻辑）
   const quickInstall = async (rec: McpMarketEntry) => {
-    setBusy(true);
-    setError("");
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const argList = rec.args.split(/\s+/).filter(Boolean);
-      // 使用包名作为 server name（去掉 scope 前缀）
-      const serverName = rec.name.startsWith("@") 
-        ? rec.name.split("/").pop() || rec.name
-        : rec.name;
-      const env = rec.env && Object.keys(rec.env).length > 0 ? rec.env : undefined;
-      await invoke("mcp_connect", {
-        config: { name: serverName, command: rec.command, args: argList, env: env || null },
-      });
-      addMcpServer({ name: serverName, command: rec.command, args: argList, env });
-      await refresh();
-    } catch (e: unknown) {
-      setError(typeof e === "string" ? e : (e as Error)?.message || String(e));
-    } finally {
-      setBusy(false);
-    }
+    const argList = rec.args.split(/\s+/).filter(Boolean);
+    const serverName = rec.name.startsWith("@") 
+      ? rec.name.split("/").pop() || rec.name
+      : rec.name;
+    const env = rec.env && Object.keys(rec.env).length > 0 ? rec.env : undefined;
+    await connect({ name: serverName, command: rec.command, args: argList, env });
   };
 
   const handleDisconnect = async (n: string) => {
@@ -285,6 +291,10 @@ export default function ToolsPanel() {
           ) : marketError && mcpMarket.length === 0 ? (
             <div className="skills-error">
               <p>{marketError}</p>
+              <p className="skills-error-hint">
+                提示：MCP 市场需要访问 npm registry 和 GitHub API，请检查网络连接。
+                也可手动输入命令连接服务器。
+              </p>
               <button className="btn btn-secondary" onClick={loadMarket}>重试</button>
             </div>
           ) : (
@@ -477,7 +487,12 @@ export default function ToolsPanel() {
                 {/* 错误诊断 */}
                 {lastError && (
                   <div className="mcp-server-error">
-                    <ErrorIcon size={12} /> {lastError}
+                    <ErrorIcon size={12} />
+                    <span>
+                      {lastError.split("\n").map((line, i) => (
+                        <span key={i}>{line}{i < lastError.split("\n").length - 1 && <br />}</span>
+                      ))}
+                    </span>
                   </div>
                 )}
                 {/* 展开的 stderr 日志 */}
@@ -576,7 +591,13 @@ export default function ToolsPanel() {
               + 添加环境变量
             </button>
           </div>
-          {error && <div className="mcp-error">{error}</div>}
+          {error && (
+            <div className="mcp-error">
+              {error.split("\n").map((line, i) => (
+                <span key={i}>{line}<br /></span>
+              ))}
+            </div>
+          )}
           <div className="form-actions">
             <button className="btn btn-primary" onClick={handleConnect} disabled={busy}>
               <PlusIcon size={14} />

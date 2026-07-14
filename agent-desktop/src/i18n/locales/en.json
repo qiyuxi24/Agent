@@ -10,7 +10,7 @@
   },
 
   "sidebar": {
-    "appTitle": "Agent Desktop",
+    "appTitle": "Votek",
     "newChat": "New Chat",
     "emptyCantCreate": "Current conversation is empty",
     "chat": "Chat",
@@ -59,6 +59,7 @@
       "skills": "Skills",
       "plugins": "Plugins",
       "rag": "Knowledge Base",
+      "pet": "Desktop Pet",
       "about": "About"
     },
 
@@ -184,8 +185,24 @@
     },
 
     "about": {
-      "version": "Agent Desktop v0.1.0",
+      "version": "Votek v0.1.0",
       "tech": "Built with Tauri v2 + React + Rust"
+    },
+
+    "pet": {
+      "enable": "Desktop Pet",
+      "enableDesc": "Show a cute desktop companion at the bottom right of your screen. It changes expressions and animations based on AI conversation states.",
+      "show": "Show Pet",
+      "hide": "Hide Pet",
+      "interact": "Interact",
+      "pet": "Pet",
+      "feed": "Feed",
+      "play": "Play",
+      "stats": "Pet Stats",
+      "mood": "Mood",
+      "friendship": "Friendship",
+      "energy": "Energy",
+      "daysTogether": "Days Together"
     },
 
     "rag": {

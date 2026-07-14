@@ -18,7 +18,7 @@
 //! | MCP-007 | ARGS_PARSE      | 工具参数 JSON 解析失败       | 将错误传回 LLM，尝试修正 |
 //! | MCP-008 | IO_ERROR        | stdin/stdout 通信错误        | 重新连接                 |
 //! | MCP-009 | JSON_PARSE      | JSON-RPC 响应解析失败        | 记录日志，可能重试       |
-//! | MCP-010 | PROCESS_SPAWN   | MCP 进程启动失败             | 检查 command/path/config |
+//! | MCP-010 | PROCESS_SPAWN   | MCP 进程启动失败             | 检查 command/path/config，会自动提示依赖安装 |
 //! | MCP-011 | INIT_FAILED     | MCP initialize 握手失败      | 检查 MCP Server 兼容性  |
 //! | MCP-012 | LLM_NETWORK     | LLM API 网络请求失败         | 检查网络/API Key         |
 //! | MCP-013 | LLM_API_ERROR   | LLM API 返回错误状态码       | 检查 API Key/配额        |
@@ -119,10 +119,19 @@ impl McpError {
     }
 
     pub fn process_spawn(command: &str, detail: &str) -> Self {
+        let hint = if command == "node" || command == "node.exe" {
+            "\n\n💡 提示：请确保已安装 Node.js (v18+)。下载地址：https://nodejs.org"
+        } else if command == "npx" || command == "npx.cmd" {
+            "\n\n💡 提示：npx 需要 Node.js (v18+)。下载地址：https://nodejs.org\n如果已安装 Node.js，请尝试运行 `npm install -g npx`"
+        } else if command == "uvx" || command == "uvx.exe" {
+            "\n\n💡 提示：uvx 需要安装 uv 包管理器。安装方法：https://docs.astral.sh/uv"
+        } else {
+            ""
+        };
         Self {
             code: "MCP-010",
             category: "PROCESS_SPAWN",
-            message: format!("启动 MCP 进程失败 ({}): {}", command, detail),
+            message: format!("启动 MCP 进程失败 ({}): {}{}", command, detail, hint),
         }
     }
 

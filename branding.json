@@ -1,0 +1,9 @@
+{
+  "productName": "Votek",
+  "identifier": "com.votek.app",
+  "appTitle": "Votek",
+  "packageName": "votek",
+  "userAgent": "votek",
+  "iconSource": "src-tauri/icons/icon.svg",
+  "_note": "改名只需改本文件，然后跑 `npm run sync-branding`（在 agent-desktop 目录下）。目录名 agent-desktop 与 Rust crate 名保持不变，避免破坏构建。"
+}

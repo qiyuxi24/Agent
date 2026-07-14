@@ -14,18 +14,19 @@
 # FASTLINK 仅生成调试信息的索引而非完整副本，大幅减少链接耗时
 rustflags = ["-C", "link-arg=/DEBUG:FASTLINK"]
 
-# ---- 构建工具路径 ----
-# protoc 供 lance-encoding / prost-build 等 protobuf 依赖使用
-# 安装方式：
+# ---- protoc (Protocol Buffers compiler) ----
+# Required by lance-encoding / prost-build (RAG feature).
+# Install one of:
 #   winget install Google.Protobuf
-# 或从 https://github.com/protocolbuffers/protobuf/releases 下载
+#   scoop install protobuf
+#   https://github.com/protocolbuffers/protobuf/releases
 #
-# ⚠️ 如果你是其他开发者 clone 本项目：
-#   1. 先安装 protoc 并确保在 PATH 中（protoc --version 验证）
-#   2. 如果在 PATH 中，删除下面的 [env] 段即可
-#   3. 如果不在 PATH，修改 PROTOC 值为你的实际安装路径
-[env]
-PROTOC = "C:\\Users\\34239\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Google.Protobuf_Microsoft.Winget.Source_8wekyb3d8bbwe\\bin\\protoc.exe"
+# If protoc is NOT in your PATH, uncomment the [env] section below
+# and set PROTOC to your actual protoc.exe location.
+# You can find it with: where protoc
+#
+# [env]
+# PROTOC = "C:\\path\\to\\your\\protoc.exe"
 
 # ---- sccache 编译缓存（可选，重复编译快 3-10x）----
 # 安装：cargo install sccache --locked

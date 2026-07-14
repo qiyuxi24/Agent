@@ -485,3 +485,16 @@ export function PlayIcon({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+/** 爪印 — 桌宠开关 */
+export function PawIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none">
+      <ellipse cx="5.5" cy="11" rx="2" ry="2.6" />
+      <ellipse cx="10" cy="7.5" rx="2" ry="2.6" />
+      <ellipse cx="14" cy="7.5" rx="2" ry="2.6" />
+      <ellipse cx="18.5" cy="11" rx="2" ry="2.6" />
+      <path d="M12 12c-3 0-5.2 2.2-5.2 4.6 0 1.9 1.7 3 4.2 3 1.2 0 1.8-.4 2.8-.4s1.6.4 2.8.4c2.5 0 4.2-1.1 4.2-3C19 14.2 15 12 12 12z" />
+    </svg>
+  );
+}

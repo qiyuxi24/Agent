@@ -183,6 +183,8 @@
 }
 
 /* --- 对话中的工具步骤 --- */
+/* ===== 工具调用步骤展示 ===== */
+
 .message-tool-steps {
   display: flex;
   justify-content: flex-start;
@@ -200,12 +202,17 @@
   padding: 10px 12px;
 }
 
+/* 单个工具步骤 */
 .tool-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* 标题行 */
+.tool-step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .tool-step-icon {
@@ -226,12 +233,12 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 600;
   color: var(--accent, #4f8cff);
-  flex-shrink: 0;
 }
 
-.tool-step-result {
-  color: var(--text-secondary, #aaa);
-  word-break: break-word;
+.tool-step-running-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* 工具步骤错误状态 */
@@ -245,6 +252,109 @@
   font-weight: 600;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+/* ===== 可展开的参数/结果区域 ===== */
+
+.tool-step-section {
+  margin-top: 4px;
+  margin-left: 21px; /* 对齐到图标右侧 */
+}
+
+.tool-step-section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: var(--bg-primary, rgba(0, 0, 0, 0.15));
+  color: var(--text-secondary, #999);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tool-step-section-toggle:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary, #ccc);
+}
+
+.tool-step-section-badge {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.tool-step-chevron {
+  font-size: 10px;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.tool-step-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+/* 展开/折叠动画 */
+.tool-step-section-content {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.2s ease;
+  margin-top: 4px;
+}
+.tool-step-section-content.collapsed {
+  grid-template-rows: 0fr;
+}
+.tool-step-section-content > * {
+  overflow: hidden;
+}
+
+/* 代码展示 */
+.tool-step-code {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg-primary, rgba(0, 0, 0, 0.2));
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary, #aaa);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono, "Cascadia Code", "Fira Code", Consolas, monospace);
+  max-height: 300px;
+  overflow-y: auto;
+}
+.tool-step-code.error {
+  color: #ff9999;
+}
+
+/* 结果头部（含复制按钮） */
+.tool-step-result-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 2px;
+}
+
+.tool-step-copy-btn {
+  padding: 1px 8px;
+  border: 1px solid var(--border-color, #333);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tool-step-copy-btn:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary, #ccc);
+}
+
+/* 旧版内联结果（保留兼容） */
+.tool-step-result {
+  color: var(--text-secondary, #aaa);
+  word-break: break-word;
 }
 
 .tool-step-result-error {

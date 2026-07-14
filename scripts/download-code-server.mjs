@@ -1,19 +1,24 @@
 // code-server 下载/设置脚本 (Node.js 版本，不依赖 PowerShell)
 // 用法：node scripts/download-code-server.mjs [版本号]
-import { createWriteStream, existsSync, mkdirSync, rmSync, statSync } from 'fs';
+import { createWriteStream, existsSync, mkdirSync, rmSync, statSync, readFileSync, writeFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import https from 'https';
 
-const VERSION = process.argv[2] || '4.127.0';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '..');
+
+// --- 从 build.config.json 读取配置 ---
+const CONFIG = JSON.parse(readFileSync(join(PROJECT_ROOT, 'build.config.json'), 'utf-8'));
+
+const VERSION = process.argv[2] || CONFIG.codeServer.version;
+const NATIVE_MODULES = CONFIG.codeServer.nativeModules;
 const TARGET_DIR = join(PROJECT_ROOT, 'agent-desktop', 'src-tauri', 'binaries');
 const RELEASE_DIR = join(TARGET_DIR, 'code-server', 'release');
 const ENTRY_JS = join(RELEASE_DIR, 'out', 'node', 'entry.js');
 const TARBALL = join(TARGET_DIR, 'package.tar.gz');
-const URL = `https://github.com/coder/code-server/releases/download/v${VERSION}/package.tar.gz`;
+const URL = CONFIG.codeServer.downloadUrlTemplate.replace('{version}', VERSION);
 
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
@@ -176,6 +181,9 @@ if (!extracted) {
     process.exit(1);
 }
 
+// === 品牌定制（Votek）===
+patchCodeServerBranding();
+
 // === 安装依赖 ===
 log('安装 npm 依赖 (--production --ignore-scripts)...', YELLOW);
 try {
@@ -190,21 +198,11 @@ try {
 }
 
 // === 检查和编译原生模块 ===
-// code-server 依赖 7 个 @vscode/* 原生 .node 模块。
+// code-server 依赖 @vscode/* 原生 .node 模块（清单见 build.config.json）。
 // --ignore-scripts 跳过了编译，使用 code-server 预编译的二进制。
 // 但如果预编译模块与当前系统不兼容（Node.js 版本、VS 组件等），
 // 需要重新编译。此步骤自动检测并修复。
-const NATIVE_MODULES = [
-    { pkg: 'windows-registry', file: 'winregistry.node' },
-    { pkg: 'windows-process-tree', file: 'windows_process_tree.node' },
-    { pkg: 'deviceid', file: 'windows.node' },
-    { pkg: 'native-watchdog', file: 'watchdog.node' },
-    { pkg: 'spdlog', file: 'spdlog.node' },
-    { pkg: 'sqlite3', file: 'vscode-sqlite3.node' },
-    { pkg: 'windows-ca-certs', file: 'crypt32.node' },
-];
-
-const VSCODE_DIR = join(RELEASE_DIR, 'lib', 'vscode', 'node_modules', '@vscode');
+const VSCODE_DIR = join(RELEASE_DIR, CONFIG.codeServer.vscodeDirRelative);
 let missingModules = [];
 
 for (const m of NATIVE_MODULES) {
@@ -219,6 +217,9 @@ if (missingModules.length > 0) {
     missingModules.forEach(m => log(`  - ${m}`, GRAY));
     log('正在重新安装 code-server 依赖（含原生编译，约 1-3 分钟）...', YELLOW);
     log('如失败，请确保已安装 Visual Studio Build Tools（C++ 工作负载）', GRAY);
+    // 先移除 @vscode 原生模块 binding.gyp 中的 SpectreMitigation 设置，
+    // 否则在缺少 Spectre 缓解库的环境（如 VS 2026 Insiders）下 node-gyp 编译会失败。
+    stripSpectreMitigation();
     try {
         // 对 vscode 子目录重新执行 npm install（这次不跳过 scripts）
         const VSCODE_NODE_DIR = join(RELEASE_DIR, 'lib', 'vscode');
@@ -242,6 +243,104 @@ if (missingModules.length > 0) {
     }
 } else {
     log('  所有 7 个原生模块验证通过', GREEN);
+}
+
+// === 品牌定制：将 code-server 改为 Votek（改名 + 换图标）===
+// 注意：只改用户可见的名称和图标，不动 VS Code 内核逻辑和 UI 风格
+function patchCodeServerBranding() {
+    log('应用 Votek 品牌定制...', CYAN);
+
+    // 1. 读取 branding.json 获取产品名
+    const brandingPath = join(PROJECT_ROOT, 'branding.json');
+    let productName = 'Votek';
+    try {
+        const branding = JSON.parse(readFileSync(brandingPath, 'utf-8'));
+        productName = branding.productName || 'Votek';
+    } catch {
+        log('  未找到 branding.json，使用默认名称 "Votek"', YELLOW);
+    }
+
+    // 2. 修改 product.json（VS Code 内部显示名称）
+    const productJsonPath = join(RELEASE_DIR, 'lib', 'vscode', 'product.json');
+    if (existsSync(productJsonPath)) {
+        try {
+            const product = JSON.parse(readFileSync(productJsonPath, 'utf-8'));
+            // 只改用户可见字段，不改内部标识符（避免破坏功能）
+            product.nameShort = productName;
+            product.nameLong = `${productName} IDE`;
+            product.applicationName = productName;
+            product.win32AppUserModelId = `com.votek.ide`;
+            product.urlProtocol = 'votek';
+            product.serverApplicationName = `${productName.toLowerCase()}-server`;
+            product.darwinBundleIdentifier = `com.votek.ide`;
+            product.telemetryOptOutUrl = '';  // 去掉遥测链接
+            product.reportIssueUrl = 'https://github.com/346379/Agent/issues';
+            product.welcomePage = '';  // 去掉欢迎页
+            product.enableTelemetry = false;
+            // 去掉 Copilot 相关的默认配置（我们的 AI 是自己的）
+            product.aiConfig = { ariaKey: productName.toLowerCase() };
+            writeFileSync(productJsonPath, JSON.stringify(product, null, 2));
+            log(`  product.json → ${productName}`, GREEN);
+        } catch (e) {
+            log(`  product.json 修改失败: ${e.message}`, YELLOW);
+        }
+    }
+
+    // 3. 替换浏览器图标（favicon / PWA icons）
+    const mediaDir = join(RELEASE_DIR, 'src', 'browser', 'media');
+    // 用项目的熊图标 SVG 作为 favicon
+    const bearIconPath = join(PROJECT_ROOT, 'agent-desktop', 'src-tauri', 'icons', 'icon.svg');
+    if (existsSync(bearIconPath) && existsSync(mediaDir)) {
+        try {
+            const bearSvg = readFileSync(bearIconPath, 'utf-8');
+            const svgIcons = ['favicon.svg', 'favicon-dark-support.svg'];
+            for (const name of svgIcons) {
+                const target = join(mediaDir, name);
+                writeFileSync(target, bearSvg);
+                log(`  替换图标: ${name}`, GREEN);
+            }
+
+            // 同时生成一个简化版 32x32 bear icon 给 favicon.ico 占位
+            // .ico 格式需要专门工具，这里先保留原文件，但把 SVG 版本换掉即可
+            log('  .ico/.png 图标需要构建时通过 npx tauri icon 生成，当前先替换 SVG', GRAY);
+        } catch (e) {
+            log(`  图标替换失败: ${e.message}`, YELLOW);
+        }
+    } else {
+        log('  未找到熊图标 SVG，跳过图标替换', YELLOW);
+    }
+}
+
+// === 移除 @vscode 原生模块中的 SpectreMitigation 设置 ===
+// 部分环境（如 VS 2026 Insiders）未安装 Spectre 缓解库，而 code-server 的
+// @vscode 原生模块（含 sqlite3 的 deps/ 子项目）的 *.gyp 默认要求
+// SpectreMitigation: Spectre，这会导致 node-gyp 编译失败（MSB8040）、原生模块缺失。
+// 移除该设置后改用常规 MSVC 库即可编译。
+function stripSpectreMitigation() {
+    const vscodeDir = join(RELEASE_DIR, CONFIG.codeServer.vscodeDirRelative);
+    if (!existsSync(vscodeDir)) return;
+    log('移除 @vscode 原生模块 *.gyp 中的 SpectreMitigation 设置...', GRAY);
+    const fixGyp = (file) => {
+        try {
+            const before = readFileSync(file, 'utf8');
+            // 兼容单/双引号与缩进差异，删除整段 SpectreMitigation 设置（含可选尾逗号/换行）
+            const after = before.replace(/['"]?SpectreMitigation['"]?\s*:\s*['"]Spectre['"]\s*,?/g, '');
+            if (after !== before) {
+                writeFileSync(file, after);
+                log(`  - 已修复 ${file.substring(vscodeDir.length + 1)}`, GRAY);
+            }
+        } catch (e) {
+            log(`  无法修改 ${file}: ${e.message}`, YELLOW);
+        }
+    };
+    const walk = (dir) => {
+        for (const ent of readdirSync(dir, { withFileTypes: true })) {
+            const p = join(dir, ent.name);
+            if (ent.isDirectory()) walk(p);
+            else if (ent.name.endsWith('.gyp')) fixGyp(p);
+        }
+    };
+    walk(vscodeDir);
 }
 
 // === 验证 ===

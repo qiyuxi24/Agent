@@ -1,0 +1,27 @@
+{
+  "$comment": "Votek 编译/构建统一配置 —— 所有构建脚本的单一真相源。修改此处后各脚本自动生效。",
+  "codeServer": {
+    "version": "4.127.0",
+    "downloadUrlTemplate": "https://github.com/coder/code-server/releases/download/v{version}/package.tar.gz",
+    "compressedSize": "~54MB",
+    "extractedSize": "~212MB",
+    "nativeModules": [
+      { "pkg": "windows-registry", "file": "winregistry.node" },
+      { "pkg": "windows-process-tree", "file": "windows_process_tree.node" },
+      { "pkg": "deviceid", "file": "windows.node" },
+      { "pkg": "native-watchdog", "file": "watchdog.node" },
+      { "pkg": "spdlog", "file": "spdlog.node" },
+      { "pkg": "sqlite3", "file": "vscode-sqlite3.node" },
+      { "pkg": "windows-ca-certs", "file": "crypt32.node" }
+    ],
+    "vscodeDirRelative": "lib/vscode/node_modules/@vscode"
+  },
+  "node": {
+    "requiredVersion": 22,
+    "supportedRange": ">=18 <=22"
+  },
+  "protoc": {
+    "hint": "winget install Google.Protobuf",
+    "$comment": "protoc 需在 PATH 或通过 .cargo/config.toml 的 [env] PROTOC 指定路径"
+  }
+}

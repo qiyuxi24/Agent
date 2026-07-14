@@ -1,4 +1,4 @@
-# Agent Desktop — 开发路线图 & TODO
+# Votek — 开发路线图 & TODO
 
 > 最后更新：2026-07-14
 
@@ -107,7 +107,7 @@
 
 ### IDE 遗留项
 - [ ] 插件/设置持久化（重启不丢失已装扩展和配置）
-- [ ] 主题与 Agent Desktop 自动同步（dark/light）
+- [ ] 主题与 Votek 自动同步（dark/light）
 - [ ] 扩展市场默认配置（预装推荐插件列表）
 - [ ] 系统原生目录选择对话框（接入 tauri-plugin-dialog）
 - [ ] Agent ↔ IDE 联动协议（Agent 打开文件/跳转行号/运行命令）
@@ -196,7 +196,7 @@ Agent 集群管理器
   - [x] 启动速度优化（code-server 常驻后台，秒开）
   - [x] 全屏原生窗口（独立 Tauri 窗口，无任何遮挡）
   - [ ] 插件/设置持久化（重启不丢失已装扩展和配置）
-  - [ ] 主题与 Agent Desktop 自动同步（dark/light）
+  - [ ] 主题与 Votek 自动同步（dark/light）
   - [x] 快捷键透传（独立窗口 = 完整 VS Code 体验，所有快捷键正常使用）
   - [ ] 扩展市场默认配置（预装推荐插件列表）
 - [x] **Step 6**：插件生态

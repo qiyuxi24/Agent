@@ -162,17 +162,31 @@ impl McpServerConfig {
         let dev_path = exe_dir.join("..").join("..").join("..").join(input);
         let canon_dev = std::fs::canonicalize(&dev_path);
         if let Ok(abs) = canon_dev {
-            return abs.to_string_lossy().to_string();
+            return Self::strip_verbatim_prefix(&abs);
         }
 
         // prod 模式：exe 同级目录
         let prod_path = exe_dir.join(input);
         if let Ok(abs) = std::fs::canonicalize(&prod_path) {
-            return abs.to_string_lossy().to_string();
+            return Self::strip_verbatim_prefix(&abs);
         }
 
         // 都找不到就保持原样（让系统报错）
         input.to_string()
+    }
+
+    /// Windows 上 `canonicalize()` 返回 `\\?\C:\...` 格式的扩展路径，
+    /// Node.js 无法识别这种路径（EISDIR），需要去掉 `\\?\` 前缀。
+    fn strip_verbatim_prefix(path: &std::path::Path) -> String {
+        let raw = path.to_string_lossy().to_string();
+        #[cfg(windows)]
+        {
+            raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
+        }
+        #[cfg(not(windows))]
+        {
+            raw
+        }
     }
 
     fn looks_like_relative(path: &str) -> bool {
@@ -892,6 +906,51 @@ impl Default for McpManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ===================== 前置依赖检测 =====================
+
+/// 检测指定命令是否可用（如 node、npx、uvx）
+async fn check_command_available(command: &str) -> Result<String, String> {
+    let output = tokio::process::Command::new(command)
+        .arg("--version")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await
+        .map_err(|e| format!("{} 未安装或不在 PATH 中 ({})", command, e))?;
+
+    if output.status.success() {
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(version)
+    } else {
+        Err(format!("{} 命令返回非零退出码", command))
+    }
+}
+
+/// 检测 MCP 连接所需的前置依赖是否就绪
+///
+/// 返回 (ok: bool, details: Vec<String>)
+#[tauri::command]
+pub async fn mcp_check_prereq(command: String) -> Result<Vec<String>, String> {
+    let mut details = Vec::new();
+    let cmds: Vec<&str> = command.split_whitespace().collect();
+    let base_cmd = cmds.first().copied().unwrap_or("");
+
+    match check_command_available(base_cmd).await {
+        Ok(version) => details.push(format!("✓ {} ({})", base_cmd, version)),
+        Err(e) => details.push(format!("✗ {}", e)),
+    }
+
+    // 如果命令是 npx，额外检测 node
+    if base_cmd == "npx" || base_cmd == "npx.cmd" {
+        match check_command_available("node").await {
+            Ok(version) => details.push(format!("✓ node ({})", version)),
+            Err(e) => details.push(format!("✗ {}", e)),
+        }
+    }
+
+    Ok(details)
 }
 
 // ===================== MCP 市场（在线抓取） =====================

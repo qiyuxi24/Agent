@@ -1,6 +1,6 @@
 # 发布操作指南
 
-本文档描述 Agent Desktop 的完整发布流程，包括版本号管理、构建、签名和分发。
+本文档描述 Votek 的完整发布流程，包括版本号管理、构建、签名和分发。
 
 ---
 
@@ -124,7 +124,7 @@ cd agent-desktop
 npm run tauri build
 ```
 
-产物路径：`agent-desktop/src-tauri/target/release/bundle/nsis/Agent Desktop_0.2.0_x64-setup.exe`
+产物路径：`agent-desktop/src-tauri/target/release/bundle/nsis/Votek_0.2.0_x64-setup.exe`
 
 ### 第五步：推送到 GitHub
 
@@ -138,7 +138,7 @@ git push origin v0.2.0
 1. 打开 [GitHub Releases](https://github.com/你的仓库/Agent/releases)
 2. 点击 "Draft a new release"
 3. Tag 选择 `v0.2.0`
-4. Release title: `Agent Desktop v0.2.0`
+4. Release title: `Votek v0.2.0`
 5. 描述中引用 CHANGELOG 内容
 6. 上传安装包 `.exe`
 7. 点击 "Publish release"
@@ -201,10 +201,10 @@ npm ci → npm run tauri build（前端 + Rust + NSIS 打包）
 ### 文件命名规范
 
 ```
-Agent Desktop_{版本号}_x64-setup.exe
+Votek_{版本号}_x64-setup.exe
 ```
 
-例：`Agent Desktop_0.2.0_x64-setup.exe`
+例：`Votek_0.2.0_x64-setup.exe`
 
 ### 分发渠道
 

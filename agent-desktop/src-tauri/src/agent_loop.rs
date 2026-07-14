@@ -14,7 +14,8 @@
 //! stream-done / stream-error）与取消机制（watch channel）保持不变。
 
 use crate::{
-    AppHandle, ChatMessage, ChatRequest, Emitter, StreamDone, StreamError, ToolCall, ToolCallEvent,
+    AppHandle, ChatMessage, ChatRequest, Emitter, FinalAnswerStart, StreamDone, StreamError,
+    StreamRetry, StreamToken, ThinkingDelta, ThinkingStart, ThinkingStop, ToolCall, ToolCallEvent,
     ToolResultEvent, run_completion,
 };
 use futures::future::BoxFuture;
@@ -76,12 +77,15 @@ impl Default for AgentLoopConfig {
 }
 
 /// LLM 客户端抽象（依赖注入，对应 mini_agent 的 provider 注入）
+///
+/// `stream_content`：普通 content 是否实时以 stream-token 推给答案框（详见 `run_completion`）。
 pub trait LlmClient: Send + Sync {
     fn complete<'a>(
         &'a self,
         messages: &'a [ChatMessage],
         tools: &'a [Value],
         cancel: &'a mut watch::Receiver<bool>,
+        stream_content: bool,
     ) -> BoxFuture<'a, Result<LlmResponse, String>>;
 }
 
@@ -114,10 +118,12 @@ impl LlmClient for RealLlmClient {
         messages: &'a [ChatMessage],
         tools: &'a [Value],
         cancel: &'a mut watch::Receiver<bool>,
+        stream_content: bool,
     ) -> BoxFuture<'a, Result<LlmResponse, String>> {
         Box::pin(async move {
             let (content, reasoning, tool_calls) =
-                run_completion(&self.app, &self.request, messages, tools, cancel).await?;
+                run_completion(&self.app, &self.request, messages, tools, cancel, stream_content)
+                    .await?;
             Ok(LlmResponse {
                 content,
                 reasoning,
@@ -172,6 +178,34 @@ fn emit<S: serde::Serialize + Clone>(app: Option<&AppHandle>, event: &str, paylo
     }
 }
 
+/// 将内容逐块以 thinking-delta 事件流式推送，模拟打字效果
+///
+/// 每块约 20 字符，块间延迟 5ms，让前端思考面板有渐进流式感。
+/// 总延迟上限：10KB 内容约 2.5s，用户可接受。
+async fn stream_content_as_thinking(app: Option<&AppHandle>, content: &str) {
+    const CHUNK_SIZE: usize = 20;
+    let chars: Vec<char> = content.chars().collect();
+    let mut offset = 0;
+
+    while offset < chars.len() {
+        let end = (offset + CHUNK_SIZE).min(chars.len());
+        let chunk: String = chars[offset..end].iter().collect();
+
+        emit(
+            app,
+            "thinking-delta",
+            ThinkingDelta { delta: chunk },
+        );
+
+        offset = end;
+
+        // 仅在还有更多内容时才延迟
+        if offset < chars.len() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+}
+
 /// Agent Loop 主循环
 pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
     let LoopContext {
@@ -219,7 +253,13 @@ pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
         }
 
         // ── THINK：调用 LLM（带指数退避重试，参考 _RetryingProvider）──
-        let resp = match llm_complete_retried(llm, &messages, &tools, cancel, &config).await {
+        // chat 模式：content 实时流为答案（stream_content=true）。
+        // agent 模式：content 先静默缓冲（stream_content=false），待判定「中间轮 vs 终止轮」
+        //             后再回放——中间轮→思考面板（推理草稿），终止轮→答案框（最终答案）。
+        let stream_content = !config.agent_mode;
+        let resp = match llm_complete_retried(app, llm, &messages, &tools, cancel, &config, stream_content)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 emit(app, "stream-error", StreamError { error: e });
@@ -245,16 +285,42 @@ pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
             resp.tool_calls.clone(),
         ));
 
-        // chat 模式：忽略工具调用，本轮即最终答案
+        // chat 模式：content 已实时流出，本轮即最终答案
         if !config.agent_mode {
             emit(app, "stream-done", StreamDone);
             return Ok(());
         }
 
-        // 没有工具调用 → 本轮即为最终回答
+        // ── agent 模式：区分「终止轮（最终答案）」与「中间轮（推理草稿）」──
         if resp.tool_calls.is_empty() {
+            // 终止轮：本轮 content 就是面向用户的最终答案 → 回放为 stream-token
+            emit(app, "final-answer-start", FinalAnswerStart);
+            if !resp.content.is_empty() {
+                emit(
+                    app,
+                    "stream-token",
+                    StreamToken {
+                        token: resp.content.clone(),
+                    },
+                );
+            }
             emit(app, "stream-done", StreamDone);
             return Ok(());
+        }
+
+        // 中间轮：content 是 agent 决定调用工具前的推理草稿 → 逐块流式回放到思考面板
+        if !resp.content.is_empty() {
+            emit(app, "thinking-start", ThinkingStart);
+            // 逐块发送，模拟流式打字效果
+            stream_content_as_thinking(app, &resp.content).await;
+            emit(
+                app,
+                "thinking-stop",
+                ThinkingStop {
+                    tokens: (resp.content.len() as u64 / 4).max(1),
+                    duration_ms: 0,
+                },
+            );
         }
 
         // ── ACT / OBSERVE：执行工具并回传结果 ──
@@ -322,15 +388,21 @@ async fn execute_and_observe(
 /// 带指数退避重试的 LLM 调用（仅对 Err 重试；run_completion 仅在初始 HTTP/网络失败时返回 Err，
 /// 流式中途错误以 stream-error 事件形式在 run_completion 内部处理，不会到这里）
 async fn llm_complete_retried(
+    app: Option<&AppHandle>,
     llm: &dyn LlmClient,
     messages: &[ChatMessage],
     tools: &[Value],
     cancel: &mut watch::Receiver<bool>,
     config: &AgentLoopConfig,
+    stream_content: bool,
 ) -> Result<LlmResponse, String> {
     let mut last_err = String::new();
     for attempt in 0..=config.llm_max_retries {
-        match llm.complete(messages, tools, cancel).await {
+        // 重试前通知前端清空之前的 token 缓冲（避免重复渲染上一轮的流式 token）
+        if attempt > 0 && stream_content {
+            emit(app, "stream-retry", StreamRetry { attempt });
+        }
+        match llm.complete(messages, tools, cancel, stream_content).await {
             Ok(r) => return Ok(r),
             Err(e) => {
                 last_err = e.clone();
@@ -389,10 +461,12 @@ async fn execute_one(
     // 首次执行
     let mut outcome = executor.execute(&tc.name, &tc.arguments).await;
 
-    // 重试（仅对 suggested_action == "retry" 的错误，参考 reliability.py `with_retry`）
+    // 重试（仅对瞬时错误 retry 重试；reconnect 由 MCP 内部自动处理，不在此重复）
+    // 参考 reliability.py `with_retry`：只重试 retryable 错误，避免双层重试放大
     for attempt in 1..=config.tool_max_retries {
         if outcome.is_error && outcome.suggested_action.as_deref() == Some("retry") {
             log_tool_call(&tc.name, &tc.arguments, Some(attempt), None);
+            tokio::time::sleep(Duration::from_millis(200 * attempt as u64)).await;
             outcome = executor.execute(&tc.name, &tc.arguments).await;
         } else {
             break;
@@ -490,6 +564,7 @@ mod tests {
             messages: &'a [ChatMessage],
             _tools: &'a [Value],
             _cancel: &'a mut watch::Receiver<bool>,
+            _stream_content: bool,
         ) -> BoxFuture<'a, Result<LlmResponse, String>> {
             Box::pin(async move {
                 self.recorded.lock().unwrap().push(messages.to_vec());

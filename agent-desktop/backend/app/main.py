@@ -7,7 +7,7 @@ from app.api.chat import router as chat_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 Agent Desktop 后端代理已启动")
+    print("🚀 Votek 后端代理已启动")
     print("   http://localhost:8000")
     print("   POST /chat - 流式对话 (SSE)")
     yield
@@ -15,7 +15,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Agent Desktop Proxy",
+    title="Votek Proxy",
     version="0.1.0",
     lifespan=lifespan,
 )

@@ -28,6 +28,9 @@ pub struct CodeServerStatus {
     pub workspace: String,
     pub url: String,
     pub version: String,
+    /// 最近一次错误信息（启动失败/进程崩溃等），无错误时为 None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// IDE 就绪事件（后端通知前端 code-server 已可访问）
@@ -35,12 +38,77 @@ pub struct CodeServerStatus {
 pub struct IdeReadyEvent {
     pub url: String,
     pub port: u16,
+    /// 失败原因（url 为空时表示启动失败，此字段含错误详情）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+// ─── 模块级常量（单一修改点） ─────────────────────
+
+/// 默认监听端口
+const CS_DEFAULT_PORT: u16 = 8443;
+/// 端口冲突时最大重试次数
+const CS_PORT_MAX_ATTEMPTS: u16 = 10;
+/// 健康检查 HTTP 客户端超时（秒）
+const CS_HEALTH_TIMEOUT_SECS: u64 = 2;
+/// 健康检查轮询间隔（毫秒）
+const CS_HEALTH_POLL_MS: u64 = 500;
+/// start_background 等待就绪超时（秒）
+const CS_BG_READY_TIMEOUT_SECS: u64 = 30;
+/// code_server_start（用户手动触发）等待就绪超时（秒）
+const CS_MANUAL_READY_TIMEOUT_SECS: u64 = 15;
+/// code_server_open_ide_window 启动后等待时间（毫秒）
+const CS_OPEN_IDE_WAIT_MS: u64 = 1500;
+/// IDE 窗口默认尺寸 (宽, 高)
+const CS_WINDOW_SIZE: (f64, f64) = (1200.0, 800.0);
+/// IDE 窗口最小尺寸 (宽, 高)
+const CS_WINDOW_MIN_SIZE: (f64, f64) = (800.0, 500.0);
+/// 日志读取行数
+const CS_LOG_LINES: usize = 50;
+/// 日志错误展示行数
+const CS_LOG_ERROR_LINES: usize = 10;
+/// IDE 窗口标签（Tauri window label）
+const CS_WINDOW_LABEL: &str = "ide";
+
+/// 构建 code-server 访问 URL（统一格式，改一处全局生效）
+fn format_cs_url(port: u16) -> String {
+    format!("http://127.0.0.1:{}", port)
+}
+
+/// 去除 Windows verbatim 路径前缀 `\\?\`。
+///
+/// Windows `canonicalize()` 返回 `\\?\C:\...` 格式，Node.js 无法识别
+/// （EISDIR on 'C:'）。此函数安全地剥离该前缀，非 Windows 原样返回。
+fn strip_verbatim_prefix(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_string()
+    }
+}
+
+/// 记录最近一次错误（供 code_server_status 查询返回给前端）
+static CS_LAST_ERROR: tokio::sync::Mutex<Option<String>> = tokio::sync::Mutex::const_new(None);
+
+/// 设置全局错误状态
+async fn set_last_error(msg: impl Into<String>) {
+    let msg = msg.into();
+    eprintln!("[CodeServer] ERROR: {}", msg);
+    *CS_LAST_ERROR.lock().await = Some(msg);
+}
+
+/// 清除全局错误状态
+async fn clear_last_error() {
+    *CS_LAST_ERROR.lock().await = None;
 }
 
 // ─── 全局状态 ───────────────────────────────────────────
 
 static CS_PROCESS: tokio::sync::Mutex<Option<Child>> = tokio::sync::Mutex::const_new(None);
-static CS_PORT: tokio::sync::Mutex<u16> = tokio::sync::Mutex::const_new(8443);
+static CS_PORT: tokio::sync::Mutex<u16> = tokio::sync::Mutex::const_new(CS_DEFAULT_PORT);
 static CS_WORKSPACE: tokio::sync::Mutex<String> = tokio::sync::Mutex::const_new(String::new());
 
 // ─── 路径 / 工具 ──────────────────────────────────────
@@ -153,13 +221,13 @@ fn find_available_port(start_port: u16, max_attempts: u16) -> Option<u16> {
 /// 等待 code-server 真正可访问（HTTP GET 200，绑定回环地址无安全风险）
 async fn wait_for_code_server(port: u16, timeout_secs: u64) -> bool {
     let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(CS_HEALTH_TIMEOUT_SECS))
         .build()
     {
         Ok(c) => c,
         Err(_) => return false,
     };
-    let url = format!("http://127.0.0.1:{}/", port);
+    let url = format_cs_url(port);
     let start = std::time::Instant::now();
     let timeout = Duration::from_secs(timeout_secs);
 
@@ -173,7 +241,7 @@ async fn wait_for_code_server(port: u16, timeout_secs: u64) -> bool {
                 eprintln!("[CodeServer] 健康检查失败: {}", e);
             }
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(CS_HEALTH_POLL_MS)).await;
     }
     false
 }
@@ -266,12 +334,8 @@ fn spawn_code_server(app: &AppHandle, workspace: &str, port: u16) -> Result<Chil
 
     let bind_addr = format!("127.0.0.1:{}", port);
     // Windows canonicalize() 会加上 \\?\ 前缀，Node.js v24 无法识别（EISDIR on 'C:'）
-    // 因此必须去掉此前缀
     let entry_raw = entry_abs.to_string_lossy().to_string();
-    let entry_str = entry_raw
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&entry_raw)
-        .to_string();
+    let entry_str = strip_verbatim_prefix(&entry_raw);
 
     eprintln!(
         "[CodeServer] entry_raw=\"{}\" entry_str=\"{}\"",
@@ -311,25 +375,28 @@ pub async fn code_server_is_installed(app: AppHandle) -> Result<bool, String> {
 
 /// 检查运行状态
 #[tauri::command]
-pub async fn code_server_status() -> Result<CodeServerStatus, String> {
-    let running = CS_PROCESS.lock().await.is_some();
+pub async fn code_server_status(app: AppHandle) -> Result<CodeServerStatus, String> {
+    let installed = cs_entry_js(&app).exists();
+    let running = ensure_process_alive().await;
     let port = *CS_PORT.lock().await;
     let ws = CS_WORKSPACE.lock().await.clone();
+    let error = CS_LAST_ERROR.lock().await.clone();
     Ok(CodeServerStatus {
-        installed: true,
+        installed,
         running,
         port,
         workspace: ws,
         url: if running {
-            format!("http://127.0.0.1:{}", port)
+            format_cs_url(port)
         } else {
             String::new()
         },
         version: String::new(),
+        error,
     })
 }
 
-/// 读取 code-server 日志（最后 50 行），供前端诊断
+/// 读取 code-server 日志（最后 N 行，由 CS_LOG_LINES 控制），供前端诊断
 #[tauri::command]
 pub async fn code_server_read_logs(app: AppHandle) -> Result<String, String> {
     let log = cs_logs_dir(&app).join("server.log");
@@ -339,9 +406,8 @@ pub async fn code_server_read_logs(app: AppHandle) -> Result<String, String> {
     std::fs::read_to_string(&log)
         .map(|content| {
             let lines: Vec<&str> = content.lines().collect();
-            let n = 50usize;
-            if lines.len() > n {
-                lines[lines.len() - n..].join("\n")
+            if lines.len() > CS_LOG_LINES {
+                lines[lines.len() - CS_LOG_LINES..].join("\n")
             } else {
                 content
             }
@@ -369,21 +435,49 @@ pub async fn start_background(app: &AppHandle) {
         return;
     }
 
+    // 预检：entry.js 是否存在
+    let entry = cs_entry_js(app);
+    if !entry.exists() {
+        let msg = format!(
+            "Code Server 未安装。入口文件不存在: {}\n请运行: npm run download:code-server",
+            entry.display()
+        );
+        set_last_error(&msg).await;
+        let _ = app.emit(
+            "ide-ready",
+            IdeReadyEvent {
+                url: String::new(),
+                port: *CS_PORT.lock().await,
+                error: Some(msg),
+            },
+        );
+        return;
+    }
+
     // 预检：node 是否可用
     let node_ok = StdCommand::new("node")
+        .creation_flags(0x08000000)
         .arg("--version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
     if !node_ok {
-        eprintln!("[CodeServer] 未找到 Node.js，请安装 Node.js 后重试");
-        eprintln!("[CodeServer] 下载: https://nodejs.org/");
+        let msg = "未找到 Node.js。请安装 Node.js 22.x: https://nodejs.org/".to_string();
+        set_last_error(&msg).await;
+        let _ = app.emit(
+            "ide-ready",
+            IdeReadyEvent {
+                url: String::new(),
+                port: *CS_PORT.lock().await,
+                error: Some(msg),
+            },
+        );
         return;
     }
 
     let port = *CS_PORT.lock().await;
     // 端口冲突检测：自动寻找可用端口
-    let port = match find_available_port(port, 10) {
+    let port = match find_available_port(port, CS_PORT_MAX_ATTEMPTS) {
         Some(p) => {
             if p != port {
                 eprintln!("[CodeServer] 端口 {} 被占用，自动切换至 {}", port, p);
@@ -391,7 +485,20 @@ pub async fn start_background(app: &AppHandle) {
             p
         }
         None => {
-            eprintln!("[CodeServer] 8443-8452 端口均被占用，放弃启动");
+            let msg = format!(
+                "端口 {}-{} 均被占用，无法启动 Code Server",
+                CS_DEFAULT_PORT,
+                CS_DEFAULT_PORT + CS_PORT_MAX_ATTEMPTS
+            );
+            set_last_error(&msg).await;
+            let _ = app.emit(
+                "ide-ready",
+                IdeReadyEvent {
+                    url: String::new(),
+                    port,
+                    error: Some(msg),
+                },
+            );
             return;
         }
     };
@@ -400,12 +507,20 @@ pub async fn start_background(app: &AppHandle) {
     let child = match spawn_code_server(app, &workspace, port) {
         Ok(c) => c,
         Err(e) => {
-            let entry = cs_entry_js(app);
-            eprintln!(
-                "[CodeServer] 启动失败: {}\n  入口: {}\n  工作区: {}\n  请确认 Node.js 已安装且 entry.js 路径正确",
+            let full_msg = format!(
+                "启动失败: {}\n  入口: {}\n  工作区: {}",
                 e,
                 entry.display(),
                 workspace
+            );
+            set_last_error(&full_msg).await;
+            let _ = app.emit(
+                "ide-ready",
+                IdeReadyEvent {
+                    url: String::new(),
+                    port,
+                    error: Some(full_msg),
+                },
             );
             return;
         }
@@ -419,32 +534,38 @@ pub async fn start_background(app: &AppHandle) {
     // 轮询等待就绪（在后台任务中，不阻塞 setup）
     let app_handle = app.clone();
     tokio::spawn(async move {
-        let url = format!("http://127.0.0.1:{}", port);
-        let ready = wait_for_code_server(port, 30).await;
+        let url = format_cs_url(port);
+        let ready = wait_for_code_server(port, CS_BG_READY_TIMEOUT_SECS).await;
 
         if ready {
+            clear_last_error().await;
             let _ = app_handle.emit(
                 "ide-ready",
                 IdeReadyEvent {
                     url: url.clone(),
                     port,
+                    error: None,
                 },
             );
             eprintln!("[CodeServer] 热备就绪: {}", url);
         } else {
+            let tail = read_last_log_lines(&app_handle, CS_LOG_ERROR_LINES);
+            let log_path = cs_logs_dir(&app_handle).join("server.log");
+            let msg = format!(
+                "启动超时 ({}s)。\n日志: {}\n最近输出:\n{}",
+                CS_BG_READY_TIMEOUT_SECS,
+                log_path.display(),
+                tail
+            );
+            set_last_error(&msg).await;
+            eprintln!("[CodeServer] {}", msg);
             let _ = app_handle.emit(
                 "ide-ready",
                 IdeReadyEvent {
                     url: String::new(),
                     port,
+                    error: Some(msg),
                 },
-            );
-            let log_path = cs_logs_dir(&app_handle).join("server.log");
-            let tail = read_last_log_lines(&app_handle, 10);
-            eprintln!(
-                "[CodeServer] 启动超时 (30s)。\n日志: {}\n最近输出:\n{}",
-                log_path.display(),
-                tail
             );
         }
     });
@@ -461,50 +582,67 @@ pub async fn code_server_start(
     if ensure_process_alive().await {
         let p = *CS_PORT.lock().await;
         let w = CS_WORKSPACE.lock().await.clone();
+        clear_last_error().await;
         return Ok(CodeServerStatus {
-            installed: true,
+            installed: cs_entry_js(&app).exists(),
             running: true,
             port: p,
             workspace: w,
-            url: format!("http://127.0.0.1:{}", p),
+            url: format_cs_url(p),
             version: String::new(),
+            error: None,
         });
     }
 
-    let use_port = port.unwrap_or(8443);
+    let use_port = port.unwrap_or(CS_DEFAULT_PORT);
     let ws = workspace.unwrap_or_else(default_workspace);
 
     if !std::path::Path::new(&ws).exists() {
-        return Err(format!("工作区路径不存在: {}", ws));
+        let msg = format!("工作区路径不存在: {}", ws);
+        set_last_error(&msg).await;
+        return Err(msg);
     }
 
     // 端口冲突检测
-    let use_port = find_available_port(use_port, 10)
-        .ok_or_else(|| format!("端口 {} 及后续 9 个端口均被占用", use_port))?;
+    let use_port = match find_available_port(use_port, CS_PORT_MAX_ATTEMPTS) {
+        Some(p) => p,
+        None => {
+            let msg = format!("端口 {} 及后续 {} 个端口均被占用", use_port, CS_PORT_MAX_ATTEMPTS);
+            set_last_error(&msg).await;
+            return Err(msg);
+        }
+    };
 
-    let child = spawn_code_server(&app, &ws, use_port)?;
+    let child = match spawn_code_server(&app, &ws, use_port) {
+        Ok(c) => c,
+        Err(e) => {
+            set_last_error(&e).await;
+            return Err(e);
+        }
+    };
 
     *CS_PROCESS.lock().await = Some(child);
     *CS_PORT.lock().await = use_port;
     *CS_WORKSPACE.lock().await = ws.clone();
 
     // 等待就绪
-    let url = format!("http://127.0.0.1:{}", use_port);
-    if !wait_for_code_server(use_port, 15).await {
-        let logs = read_last_log_lines(&app, 10);
-        return Err(format!(
-            "Code Server 启动超时。\n最近日志:\n{}",
-            logs
-        ));
+    let url = format_cs_url(use_port);
+    if !wait_for_code_server(use_port, CS_MANUAL_READY_TIMEOUT_SECS).await {
+        let logs = read_last_log_lines(&app, CS_LOG_ERROR_LINES);
+        let msg = format!("Code Server 启动超时。\n最近日志:\n{}", logs);
+        set_last_error(&msg).await;
+        return Err(msg);
     }
 
+    clear_last_error().await;
     Ok(CodeServerStatus {
-        installed: true,
+        installed: cs_entry_js(&app).exists(),
         running: true,
         port: use_port,
         workspace: ws,
         url,
         version: String::new(),
+        error: None,
     })
 }
 
@@ -522,22 +660,24 @@ pub async fn code_server_open_ide_window(app: AppHandle) -> Result<(), String> {
         start_background(&app).await;
 
         // 给 code-server 一点时间初始化
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        tokio::time::sleep(Duration::from_millis(CS_OPEN_IDE_WAIT_MS)).await;
 
         // 再次检查是否已存活
         if !ensure_process_alive().await {
-            let logs = read_last_log_lines(&app, 10);
-            return Err(format!(
+            let logs = read_last_log_lines(&app, CS_LOG_ERROR_LINES);
+            let msg = format!(
                 "Code Server 启动失败。请确认 Node.js 已安装。\n\n最近日志:\n{}",
                 if logs.is_empty() { "(无输出)" } else { &logs }
-            ));
+            );
+            set_last_error(&msg).await;
+            return Err(msg);
         }
     }
 
-    let url = format!("http://127.0.0.1:{}", port);
+    let url = format_cs_url(port);
 
     // 检查是否已有 IDE 窗口
-    if let Some(window) = app.get_webview_window("ide") {
+    if let Some(window) = app.get_webview_window(CS_WINDOW_LABEL) {
         // 已有窗口 → 聚焦并刷新
         let _ = window.eval(&format!("window.location.href = '{}'", url));
         let _ = window.set_focus();
@@ -548,27 +688,47 @@ pub async fn code_server_open_ide_window(app: AppHandle) -> Result<(), String> {
     // 创建新窗口
     let ws = CS_WORKSPACE.lock().await.clone();
     let title = if ws.is_empty() {
-        "VS Code IDE".to_string()
+        "IDE".to_string()
     } else {
         let name = std::path::Path::new(&ws)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "IDE".to_string());
-        format!("{} — VS Code", name)
+        format!("{} — IDE", name)
     };
+
+    // 轻量品牌初始化脚本：确保页面标题一致（product.json 已处理大部分命名）
+    let init_script = r#"
+(function() {
+    // 轮询修正页面标题（VS Code 动态加载后可能覆盖 title）
+    var attempts = 0;
+    var fixTitle = function() {
+        if (document.title && document.title.indexOf('Votek') === -1 && document.title.indexOf('code-server') !== -1) {
+            document.title = document.title.replace(/code-server/gi, 'Votek');
+        }
+        // 也修正可能的 "Code - " 前缀
+        if (document.title && document.title.startsWith('Code - ')) {
+            document.title = document.title.replace('Code - ', '');
+        }
+        if (++attempts < 30) setTimeout(fixTitle, 1000);
+    };
+    setTimeout(fixTitle, 500);
+})();
+"#;
 
     let _webview = WebviewWindowBuilder::new(
         &app,
-        "ide",
+        CS_WINDOW_LABEL,
         WebviewUrl::External(url.parse().unwrap()),
     )
     .title(&title)
-    .inner_size(1200.0, 800.0)
-    .min_inner_size(800.0, 500.0)
+    .inner_size(CS_WINDOW_SIZE.0, CS_WINDOW_SIZE.1)
+    .min_inner_size(CS_WINDOW_MIN_SIZE.0, CS_WINDOW_MIN_SIZE.1)
     .center()
     .visible(true)
     .resizable(true)
     .fullscreen(false)
+    .initialization_script(init_script)
     .build()
     .map_err(|e| format!("创建 IDE 窗口失败: {}", e))?;
 
@@ -579,7 +739,7 @@ pub async fn code_server_open_ide_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn code_server_stop(app: AppHandle) -> Result<(), String> {
     // 关闭 IDE 窗口（如果开着）
-    if let Some(window) = app.get_webview_window("ide") {
+    if let Some(window) = app.get_webview_window(CS_WINDOW_LABEL) {
         let _ = window.close();
     }
 
@@ -588,6 +748,71 @@ pub async fn code_server_stop(app: AppHandle) -> Result<(), String> {
         let _ = child.kill();
     }
     Ok(())
+}
+
+/// 重启 code-server（停止当前实例并重新启动）
+#[tauri::command]
+pub async fn code_server_restart(app: AppHandle) -> Result<CodeServerStatus, String> {
+    eprintln!("[CodeServer] 用户请求重启...");
+
+    // 1. 关闭 IDE 窗口
+    if let Some(window) = app.get_webview_window(CS_WINDOW_LABEL) {
+        let _ = window.close();
+    }
+
+    // 2. 终止当前进程
+    {
+        let mut proc = CS_PROCESS.lock().await;
+        if let Some(mut child) = proc.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+            eprintln!("[CodeServer] 旧进程已终止");
+        }
+    }
+
+    // 3. 清除错误状态
+    clear_last_error().await;
+
+    // 4. 等待端口释放
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // 5. 重新启动
+    let port = *CS_PORT.lock().await;
+    let port = find_available_port(port, CS_PORT_MAX_ATTEMPTS).ok_or_else(|| {
+        format!("重启失败：端口 {}-{} 均被占用", port, port + CS_PORT_MAX_ATTEMPTS)
+    })?;
+
+    let workspace = CS_WORKSPACE.lock().await.clone();
+    let workspace = if workspace.is_empty() {
+        default_workspace()
+    } else {
+        workspace
+    };
+
+    let child = spawn_code_server(&app, &workspace, port)?;
+    *CS_PROCESS.lock().await = Some(child);
+    *CS_PORT.lock().await = port;
+    *CS_WORKSPACE.lock().await = workspace.clone();
+
+    // 6. 等待就绪
+    if !wait_for_code_server(port, CS_MANUAL_READY_TIMEOUT_SECS).await {
+        let logs = read_last_log_lines(&app, CS_LOG_ERROR_LINES);
+        let msg = format!("重启后启动超时。\n最近日志:\n{}", logs);
+        set_last_error(&msg).await;
+        return Err(msg);
+    }
+
+    clear_last_error().await;
+    eprintln!("[CodeServer] 重启成功，端口 {}", port);
+    Ok(CodeServerStatus {
+        installed: cs_entry_js(&app).exists(),
+        running: true,
+        port,
+        workspace,
+        url: format_cs_url(port),
+        version: String::new(),
+        error: None,
+    })
 }
 
 /// 应用退出时清理 code-server 子进程（不关窗口，仅杀进程）

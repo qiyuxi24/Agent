@@ -11,7 +11,6 @@ crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-ureq = "3"
 
 [dependencies]
 tauri = { version = "2", features = ["devtools", "unstable"] }

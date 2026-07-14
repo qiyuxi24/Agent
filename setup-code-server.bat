@@ -1,24 +1,20 @@
 @echo off
-setlocal
-
-cd /d "%~dp0agent-desktop\"
-
+REM ============================================================
+REM  Votek - Code Server setup (calls unified CLI)
+REM ============================================================
+cd /d "%~dp0"
 echo ========================================
-echo   Downloading Code Server (v4.127.0)
-echo   Size: ~54MB compressed / ~212MB extracted
+echo   Preparing Code Server
 echo ========================================
 echo.
-
-node "..\scripts\download-code-server.mjs"
-
+node scripts\build\index.mjs prepare
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [ERROR] Code Server download failed.
+    echo [ERROR] Code Server setup failed.
     echo You can also try: npm run download:code-server
     pause
     exit /b 1
 )
-
 echo.
 echo [OK] Code Server is ready!
 pause

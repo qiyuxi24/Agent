@@ -37,25 +37,42 @@ function App() {
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
     const servers = useAppStore.getState().mcpServers;
     if (servers.length === 0) return;
+
     (async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+
+      // 先检测 node/npx 是否可用（内置服务器依赖 Node.js）
+      let nodeOk = false;
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        for (const s of servers) {
-          try {
-            await invoke("mcp_connect", {
-              config: {
-                name: s.name,
-                command: s.command,
-                args: s.args,
-                env: s.env || null,
-              },
-            });
-          } catch (e) {
-            console.error("[MCP] 自动连接失败:", s.name, e);
-          }
+        const prereqResults = await invoke<string[]>("mcp_check_prereq", { command: "node" });
+        nodeOk = prereqResults.some((r) => r.startsWith("✓ node"));
+        if (!nodeOk) {
+          console.warn("[MCP] Node.js 未安装，内置服务器（web/tavily）将无法连接。请安装 Node.js v18+: https://nodejs.org");
         }
       } catch {
-        // 非 Tauri 环境忽略
+        console.warn("[MCP] 无法检测 Node.js 依赖，可能不在 Tauri 环境中");
+      }
+
+      for (const s of servers) {
+        try {
+          // 对 node/npx 命令，如果 node 不可用则跳过（避免无效连接尝试）
+          const baseCmd = s.command.split(/\s+/)[0].toLowerCase();
+          if ((baseCmd === "node" || baseCmd === "npx") && !nodeOk) {
+            console.warn(`[MCP] 跳过 ${s.name}：Node.js 不可用`);
+            continue;
+          }
+          await invoke("mcp_connect", {
+            config: {
+              name: s.name,
+              command: s.command,
+              args: s.args,
+              env: s.env || null,
+            },
+          });
+          console.log(`[MCP] 自动连接成功: ${s.name}`);
+        } catch (e) {
+          console.error(`[MCP] 自动连接失败: ${s.name}`, e);
+        }
       }
     })();
   }, [ready]);

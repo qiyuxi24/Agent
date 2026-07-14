@@ -1,5 +1,5 @@
 {
-  "name": "agent-desktop",
+  "name": "votek",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "download:code-server": "node ../scripts/download-code-server.mjs",
-    "setup:code-server": "node ../scripts/download-code-server.mjs"
+    "setup:code-server": "node ../scripts/download-code-server.mjs",
+    "sync-branding": "node ../scripts/sync-branding.mjs"
   },
   "engines": {
     "node": ">=18 <=22",

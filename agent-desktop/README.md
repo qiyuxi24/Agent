@@ -1,4 +1,4 @@
-# Agent Desktop
+# Votek
 
 > 轻量级桌面 AI 对话客户端，支持多模型切换，对话记录本地存储。
 
@@ -214,4 +214,12 @@ protoc --version  # 验证安装
 
 ## License
 
-MIT
+本项目采用 **Business Source License 1.1（BSL 1.1）**——源码可见但**非完全开源**。
+
+- 允许：免费查看、修改源码，用于个人 / 学习 / 内部业务使用。
+- 限制：不得将本软件以托管或嵌入式方式提供给第三方，用于与本项目形成商业竞争。
+- 变更：到 `Change Date`（2029-07-14）或首个发布日后第四年（以较早者为准），本仓库自动以 **Apache License 2.0** 开源。
+
+如需商业授权（超出上述 Additional Use Grant 的范围），请联系作者获取商业许可。
+
+详见根目录 [LICENSE](./LICENSE) 文件。

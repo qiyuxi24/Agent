@@ -1,0 +1,73 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+#pet-root,
+.pet-root {
+  width: 220px;
+  height: 260px;
+}
+
+.pet-root {
+  position: relative;
+  user-select: none;
+  cursor: grab;
+  -webkit-app-region: drag;
+}
+
+.pet-root:active {
+  cursor: grabbing;
+}
+
+.pet-canvas {
+  width: 220px;
+  height: 260px;
+  display: block;
+  pointer-events: none;
+}
+
+.pet-bubble {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.94);
+  color: #222;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  animation: pet-pop 0.18s ease-out;
+}
+
+@keyframes pet-pop {
+  from {
+    transform: translateX(-50%) scale(0.8);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%) scale(1);
+    opacity: 1;
+  }
+}
+
+.pet-stats {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: #444;
+  background: rgba(255, 255, 255, 0.65);
+  padding: 2px 8px;
+  border-radius: 10px;
+  pointer-events: none;
+}

@@ -1,4 +1,4 @@
-/* ===== Agent Desktop Styles =====
+/* ===== Votek Styles =====
  * 按模块拆分，单个文件不超过 300 行
  * 加载顺序：变量 → 重置 → 布局 → 组件 → 工具
  */
@@ -14,6 +14,8 @@
 @import './mcp.css';
 @import './model-picker.css';
 @import './browser.css';
-@import './ide.css';
+/* ide.css (embedded-editor) — 预留：当前前端未接入，仅 IdePage 用 code-server-status.css
+   未来接入内嵌编辑器时取消下行注释 */
+/* @import './ide.css'; */
 @import './rag.css';
 @import './scrollbar.css';
