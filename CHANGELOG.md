@@ -10,27 +10,54 @@
 
 ### 新增
 
+- **Code Server IDE**：完整 VS Code 内核，独立窗口体验
+  - code-server v4.127.0 自动下载安装（~212MB）
+  - 独立 Tauri 窗口（非 iframe 嵌入）
+  - 应用启动时后台热备，秒开 IDE
+  - 完整 VS Code 插件生态（.vsix）
+  - `--auth none` 本地免密模式
+
+- **RAG 知识库**：本地向量检索 + 文档问答
+  - fastembed 本地 ONNX 嵌入（BGE 中文模型，~47MB）
+  - text-splitter 语义分块 + LanceDB 向量存储
+  - 文档上传/列表/删除 + 检索测试面板
+  - Embedder trait 解耦，切换嵌入方案零成本
+
+- **深度思考可视化**：支持 reasoning_content 展示
+  - 后端 `ThinkingStart/ThinkingDelta/ThinkingStop` 事件
+  - 前端 ThinkingBlock 折叠面板组件
+  - 适用于 DeepSeek-R1 等推理模型
+
 - **内置浏览器**：基于 WebView2 原生内核的完整浏览器
   - 使用 Tauri WebviewBuilder 子 webview（与 Edge 同内核）
   - Rust 侧 `browser.rs` 模块 + 9 个 Tauri commands
   - 事件驱动地址栏同步 + 原生历史栈
-  - ResizeObserver 自动适配窗口大小
 
 - **Skills 技能生态系统**：设置页新增 Skills 面板
   - Rust 侧 `skills.rs` 模块 + 6 个 Tauri commands
   - 技能市场：从 GitHub 获取列表，支持分类筛选和一键安装
   - 7 个预设技能：前端开发、全栈开发、MCP 构建器、Prompt 工程等
+  - Agent 模式自动注入启用的 Skills 到 system prompt
 
-- **MCP 工具面板增强**：市场推荐 + 实时状态
-  - 5 个推荐服务器一键安装
-  - 15 秒定时刷新连接状态，连接脉冲动画
+- **MCP 工具系统增强**：
+  - 3 个内置 Server（web/tavily/sqlite）+ 在线市场
+  - 14 类错误码 + 多级超时保护 + 自动重连
+  - 工具调用缓存（TTL 60s）+ 健康检查 + 错误计数
 
 ### 修复
 
+- **可移植性修复**（2026-07-13）：
+  - Node.js 版本锁定 22（.nvmrc + engines 字段）
+  - PROTOC 路径注释指引（去除硬编码用户路径依赖）
+  - 原生模块自动检测 + 编译（7 个 @vscode/* .node 文件）
+  - build.rs 新增 `check_native_modules()` 编译时检查
+  - tauri.conf.json $schema 修正为 tauri 官方 URL
+  - start-dev.bat 自动检查并下载 code-server
 - MCP 错误码体系：14 类错误码 + 重试/重连策略标记
 - 工具调用超时保护：多种超时机制防止对话阻塞
 - 进程健康检测 + stderr 捕获
 - 对话降级保护：进程退出时自动中止后续工具调用
+- build.bat CMD 语法转义修复（`<--` → `^<--`）
 
 ---
 

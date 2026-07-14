@@ -149,16 +149,29 @@ agent-desktop/
 
 ## 路线图
 
-- [x] 流式对话 + 多对话管理
-- [x] 多模型提供商管理 + 一键切换
-- [x] 明暗主题
-- [x] 本地持久化（对话记录 + 设置）
-- [x] 前后端分离编译
-- [x] 首次启动自动初始化
-- [ ] 消息 Markdown 渲染
-- [ ] 快捷键支持
-- [ ] 系统托盘
-- [ ] 自动更新
+详见 [TODO.md](TODO.md)
+
+### 已完成
+- [x] 流式对话 + 多对话管理 + 上下文管理
+- [x] 多模型提供商管理 + 一键切换（OpenAI/Claude/DeepSeek/通义）
+- [x] Markdown 渲染 + 代码高亮 + 复制按钮
+- [x] 明暗主题 + i18n（中/英）
+- [x] 快捷键系统（Ctrl+K/B/L 等）
+- [x] 本地持久化（SQLite + store.json + Windows Credential）
+- [x] Agent 模式（ReAct 工具循环 + 深度思考可视化）
+- [x] MCP 工具系统（14 错误码 + 3 层超时 + 在线市场）
+- [x] Skills 技能系统（市场安装 + 7 个预装技能）
+- [x] IDE（code-server 独立窗口 + 后台热备）
+- [x] RAG 知识库（本地向量嵌入 + LanceDB + 文档检索）
+- [x] 内置浏览器（WebView2 + 地址栏导航）
+
+### 进行中 / 规划
+- [ ] Agent 集群架构（多 Agent 并行 + 共享工具层）
+- [ ] 插件系统完善（npm 分发 + 沙箱 + SDK）
+- [ ] 自动更新（Tauri updater）
+- [ ] macOS / Linux 适配
+- [ ] 代码签名
+- [ ] 应用商店上架
 
 ## 故障排查
 
