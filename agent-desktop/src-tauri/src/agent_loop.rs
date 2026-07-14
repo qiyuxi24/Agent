@@ -239,25 +239,11 @@ pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
         );
 
         // 把 assistant 消息加回上下文（含 tool_calls 供下一轮对齐）
-        messages.push(ChatMessage {
-            role: "assistant".to_string(),
-            content: if resp.content.is_empty() {
-                None
-            } else {
-                Some(resp.content.clone())
-            },
-            reasoning_content: if resp.reasoning.is_empty() {
-                None
-            } else {
-                Some(resp.reasoning.clone())
-            },
-            tool_calls: if resp.tool_calls.is_empty() {
-                None
-            } else {
-                Some(resp.tool_calls.clone())
-            },
-            tool_call_id: None,
-        });
+        messages.push(ChatMessage::assistant(
+            resp.content.clone(),
+            resp.reasoning.clone(),
+            resp.tool_calls.clone(),
+        ));
 
         // chat 模式：忽略工具调用，本轮即最终答案
         if !config.agent_mode {
@@ -271,61 +257,66 @@ pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
             return Ok(());
         }
 
-        // ── ACT / OBSERVE：执行工具 ──
-        // 先 emit 所有 tool-call 事件（保持前端顺序稳定）
-        for tc in &resp.tool_calls {
-            emit(
-                app,
-                "tool-call",
-                ToolCallEvent {
-                    name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
-                },
-            );
-        }
-
-        // 并行或串行执行（OpenAI Agents SDK 的并行 tool 调用）
-        let outcomes: Vec<ToolOutcome> = if config.parallel_tools {
-            let futs = resp
-                .tool_calls
-                .iter()
-                .map(|tc| execute_one(tc, &valid_tools, executor, &config));
-            futures::future::join_all(futs).await
-        } else {
-            let mut v = Vec::with_capacity(resp.tool_calls.len());
-            for tc in &resp.tool_calls {
-                v.push(execute_one(tc, &valid_tools, executor, &config).await);
-            }
-            v
-        };
-
-        // emit tool-result + 把结果作为 tool 消息回传（进入下一轮）
-        for (tc, outcome) in resp.tool_calls.iter().zip(outcomes.into_iter()) {
-            emit(
-                app,
-                "tool-result",
-                ToolResultEvent {
-                    name: tc.name.clone(),
-                    result: outcome.result.clone(),
-                    is_error: outcome.is_error,
-                    error_code: outcome.error_code.clone(),
-                    error_category: outcome.error_category.clone(),
-                    suggested_action: outcome.suggested_action.clone(),
-                },
-            );
-            messages.push(ChatMessage {
-                role: "tool".to_string(),
-                content: Some(outcome.result.clone()),
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: Some(tc.id.clone()),
-            });
-        }
+        // ── ACT / OBSERVE：执行工具并回传结果 ──
+        execute_and_observe(app, &resp.tool_calls, &valid_tools, executor, &config, &mut messages).await;
     }
 
     // 超出最大迭代，正常结束
     emit(app, "stream-done", StreamDone);
     Ok(())
+}
+
+/// 执行工具调用 + emit tool-call/tool-result 事件 + 把结果回写到消息列表
+async fn execute_and_observe(
+    app: Option<&AppHandle>,
+    tool_calls: &[ToolCall],
+    valid_tools: &HashSet<String>,
+    executor: &dyn ToolExecutor,
+    config: &AgentLoopConfig,
+    messages: &mut Vec<ChatMessage>,
+) {
+    // 先 emit 所有 tool-call 事件（保持前端顺序稳定）
+    for tc in tool_calls {
+        emit(
+            app,
+            "tool-call",
+            ToolCallEvent {
+                name: tc.name.clone(),
+                arguments: tc.arguments.clone(),
+            },
+        );
+    }
+
+    // 并行或串行执行（OpenAI Agents SDK 的并行 tool 调用）
+    let outcomes: Vec<ToolOutcome> = if config.parallel_tools {
+        let futs = tool_calls
+            .iter()
+            .map(|tc| execute_one(tc, valid_tools, executor, config));
+        futures::future::join_all(futs).await
+    } else {
+        let mut v = Vec::with_capacity(tool_calls.len());
+        for tc in tool_calls {
+            v.push(execute_one(tc, valid_tools, executor, config).await);
+        }
+        v
+    };
+
+    // emit tool-result + 把结果作为 tool 消息回传（进入下一轮）
+    for (tc, outcome) in tool_calls.iter().zip(outcomes.into_iter()) {
+        emit(
+            app,
+            "tool-result",
+            ToolResultEvent {
+                name: tc.name.clone(),
+                result: outcome.result.clone(),
+                is_error: outcome.is_error,
+                error_code: outcome.error_code.clone(),
+                error_category: outcome.error_category.clone(),
+                suggested_action: outcome.suggested_action.clone(),
+            },
+        );
+        messages.push(ChatMessage::tool(tc.id.clone(), &outcome.result));
+    }
 }
 
 /// 带指数退避重试的 LLM 调用（仅对 Err 重试；run_completion 仅在初始 HTTP/网络失败时返回 Err，
@@ -440,19 +431,25 @@ fn log_tool_call(name: &str, args: &str, retry_attempt: Option<u32>, error: Opti
     }
 }
 
-/// 脱敏工具参数（参考 reliability.py：对 key/secret/token/password 等字段打码）
+/// 敏感参数字段名（用于日志脱敏，大小写不敏感子串匹配）
+const SENSITIVE_FIELDS: &[&str] = &["key", "secret", "token", "password", "api_key", "authorization"];
+
+/// 脱敏工具参数（参考 reliability.py：对敏感字段打码）
+/// 成功后返回脱敏 JSON；JSON 序列化失败时绝不回退到原始参数
 fn sanitize_args(args: &str) -> String {
     match serde_json::from_str::<Value>(args) {
         Ok(mut v) => {
             if let Some(obj) = v.as_object_mut() {
-                let sensitive = ["key", "secret", "token", "password", "api_key", "authorization"];
                 for (k, val) in obj.iter_mut() {
-                    if sensitive.iter().any(|s| k.to_lowercase().contains(s)) {
+                    let lower = k.to_lowercase();
+                    if SENSITIVE_FIELDS.iter().any(|s| lower.contains(s)) {
                         *val = Value::String("***".into());
                     }
                 }
             }
-            serde_json::to_string(&v).unwrap_or_else(|_| args.to_string())
+            serde_json::to_string(&v).unwrap_or_else(|e| {
+                format!("(redacted params, serialization failed: {e})")
+            })
         }
         Err(_) => {
             let t: String = args.chars().take(200).collect();
@@ -545,13 +542,7 @@ mod tests {
     }
 
     fn user_msg(text: &str) -> ChatMessage {
-        ChatMessage {
-            role: "user".to_string(),
-            content: Some(text.to_string()),
-            reasoning_content: None,
-            tool_calls: None,
-            tool_call_id: None,
-        }
+        ChatMessage::user(text)
     }
 
     #[tokio::test]

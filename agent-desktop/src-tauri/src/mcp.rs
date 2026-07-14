@@ -38,6 +38,8 @@ const STDERR_RING_SIZE: usize = 50;
 const CACHE_TTL_SECS: u64 = 60;
 /// 缓存最大条目数（超过则清空）
 const CACHE_MAX_ENTRIES: usize = 200;
+/// llm_tools 列表缓存 TTL（秒）：工具定义很少变动，缓冲避免每轮对话重建
+const TOOLS_CACHE_TTL_SECS: u64 = 30;
 
 /// 单个 MCP 工具的描述（来自 tools/list）
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -207,6 +209,8 @@ impl McpClient {
         let resolved_config = config.clone().resolve_paths();
 
         let mut std_cmd = std::process::Command::new(&resolved_config.command);
+        // CREATE_NO_WINDOW: 防止 MCP 子进程弹出控制台窗口（仅 Windows）
+        #[cfg(windows)]
         std_cmd.creation_flags(0x08000000);
         let mut cmd = Command::from(std_cmd);
         cmd.args(&resolved_config.args);
@@ -430,10 +434,24 @@ impl McpClient {
             let msg: Value = match serde_json::from_str(line_str) {
                 Ok(v) => v,
                 Err(_e) => {
+                    // UTF-8 安全截断：按字符边界截取，避免在多字节字符中间切断
+                    let preview = {
+                        let end = line_str.len().min(120);
+                        if line_str.is_char_boundary(end) {
+                            &line_str[..end]
+                        } else {
+                            // 向前找最近的字符边界
+                            let mut boundary = end;
+                            while boundary > 0 && !line_str.is_char_boundary(boundary) {
+                                boundary -= 1;
+                            }
+                            &line_str[..boundary]
+                        }
+                    };
                     eprintln!(
                         "[MCP:{}] 收到非 JSON 行，跳过: {}",
                         self.server_name,
-                        &line_str[..line_str.len().min(120)]
+                        preview
                     );
                     // 累加错误计数防止死循环（垃圾输出太多）
                     continue;
@@ -583,6 +601,8 @@ pub struct McpManager {
     server_configs: Mutex<HashMap<String, McpServerConfig>>,
     /// 工具调用缓存（key → 过期时间 + 结果），避免 LLM 重复调用
     tool_cache: Mutex<HashMap<String, (Instant, String)>>,
+    /// llm_tools() 调用结果缓存（带 TTL），减少重复构建
+    tools_cache: Mutex<Option<(Instant, Vec<Value>)>>,
 }
 
 impl McpManager {
@@ -591,6 +611,7 @@ impl McpManager {
             servers: Mutex::new(HashMap::new()),
             server_configs: Mutex::new(HashMap::new()),
             tool_cache: Mutex::new(HashMap::new()),
+            tools_cache: Mutex::new(None),
         }
     }
 
@@ -608,6 +629,8 @@ impl McpManager {
             old.kill();
         }
         servers.insert(name, client);
+        drop(servers);
+        self.invalidate_tools_cache().await;
         Ok(count)
     }
 
@@ -618,6 +641,8 @@ impl McpManager {
         if let Some(mut c) = servers.remove(name) {
             c.kill();
         }
+        drop(servers);
+        self.invalidate_tools_cache().await;
         Ok(())
     }
 
@@ -661,7 +686,17 @@ impl McpManager {
     }
 
     /// 生成给 LLM 的 tools 数组（工具名用 `server::tool` 命名空间避免冲突）
+    /// 结果带 30s TTL 缓存，因为工具定义很少变动
     pub async fn llm_tools(&self) -> Vec<Value> {
+        {
+            let cache = self.tools_cache.lock().await;
+            if let Some((ts, tools)) = cache.as_ref() {
+                if ts.elapsed() < Duration::from_secs(TOOLS_CACHE_TTL_SECS) {
+                    return tools.clone();
+                }
+            }
+        }
+
         let servers = self.servers.lock().await;
         let mut out = Vec::new();
         for (sname, client) in servers.iter() {
@@ -677,7 +712,14 @@ impl McpManager {
                 }));
             }
         }
+
+        self.tools_cache.lock().await.replace((Instant::now(), out.clone()));
         out
+    }
+
+    /// 使 tools 缓存失效（在 servers 变更时调用）
+    async fn invalidate_tools_cache(&self) {
+        self.tools_cache.lock().await.take();
     }
 
     /// 构建缓存 key（server::tool + 序列化参数）
@@ -1015,11 +1057,7 @@ async fn fetch_npm_mcp_packages() -> Result<Vec<NpmPackageInfo>, String> {
     ];
 
     let mut all_packages: Vec<NpmPackageInfo> = Vec::new();
-    let client = reqwest::Client::builder()
-        .user_agent("agent-desktop/0.3.0")
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("构建 HTTP 客户端失败: {}", e))?;
+    let client = crate::build_market_client(10)?;
 
     for url in &urls {
         let resp = client.get(*url).send().await.map_err(|e| e.to_string())?;
@@ -1055,7 +1093,7 @@ async fn fetch_github_mcp_repos() -> Result<Vec<GitHubRepo>, String> {
 
     let mut all_repos: Vec<GitHubRepo> = Vec::new();
     let client = reqwest::Client::builder()
-        .user_agent("agent-desktop/0.3.0")
+        .user_agent(crate::USER_AGENT)
         .default_headers({
             let mut h = reqwest::header::HeaderMap::new();
             h.insert(reqwest::header::ACCEPT, reqwest::header::HeaderValue::from_static("application/vnd.github.v3+json"));
@@ -1063,7 +1101,7 @@ async fn fetch_github_mcp_repos() -> Result<Vec<GitHubRepo>, String> {
         })
         .timeout(Duration::from_secs(10))
         .build()
-        .map_err(|e| format!("构建 HTTP 客户端失败: {}", e))?;
+        .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?;
 
     for url in &urls {
         let resp = client.get(*url).send().await.map_err(|e| e.to_string())?;

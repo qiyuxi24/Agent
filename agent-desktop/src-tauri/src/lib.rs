@@ -13,11 +13,39 @@ use futures::StreamExt;
 use mcp::{McpManager, McpServerConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::LazyLock;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
 use std::collections::HashMap;
 use std::fs;
 use std::time::Instant;
+
+// ── 全局常量（魔术数字提取） ──
+/// Agent 模式最大迭代轮数
+const AGENT_MAX_ITERATIONS: usize = 10;
+/// Chat 模式 = 单轮（不走工具循环）
+const CHAT_MAX_ITERATIONS: usize = 1;
+/// LLM 请求温度
+const DEFAULT_TEMPERATURE: f64 = 0.7;
+/// LLM 最大输出 token 数
+const DEFAULT_MAX_TOKENS: u32 = 4096;
+/// 取消流注册 key
+const CANCEL_STREAM_KEY: &str = "chat";
+
+/// 统一 User-Agent（从 Cargo.toml 版本号手动同步：搜索 "USER_AGENT" 可找到所有位置）
+pub(crate) const USER_AGENT: &str = "agent-desktop/0.3.0";
+
+/// 复用 reqwest Client（内建连接池），避免每次 LLM 调用重新建立 TCP 连接
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+/// 构建用于市场抓取的 HTTP Client（统一 user_agent + timeout）
+pub(crate) fn build_market_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatRequest {
@@ -47,6 +75,27 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+}
+
+impl ChatMessage {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self { role: "system".into(), content: Some(content.into()), reasoning_content: None, tool_calls: None, tool_call_id: None }
+    }
+    pub fn user(content: impl Into<String>) -> Self {
+        Self { role: "user".into(), content: Some(content.into()), reasoning_content: None, tool_calls: None, tool_call_id: None }
+    }
+    pub fn tool(tool_call_id: String, content: impl Into<String>) -> Self {
+        Self { role: "tool".into(), content: Some(content.into()), reasoning_content: None, tool_calls: None, tool_call_id: Some(tool_call_id) }
+    }
+    pub fn assistant(content: String, reasoning: String, tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            role: "assistant".into(),
+            content: if content.is_empty() { None } else { Some(content) },
+            reasoning_content: if reasoning.is_empty() { None } else { Some(reasoning) },
+            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+            tool_call_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -185,22 +234,10 @@ async fn chat_stream(
                 let existing = first.content.clone().unwrap_or_default();
                 first.content = Some(format!("{skills_prompt}\n\n{existing}"));
             } else {
-                messages.insert(0, ChatMessage {
-                    role: "system".to_string(),
-                    content: Some(skills_prompt),
-                    reasoning_content: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
+                messages.insert(0, ChatMessage::system(&skills_prompt));
             }
         } else {
-            messages.insert(0, ChatMessage {
-                role: "system".to_string(),
-                content: Some(skills_prompt),
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: None,
-            });
+            messages.insert(0, ChatMessage::system(&skills_prompt));
         }
         eprintln!("[chat_stream] 已注入 {} 字节的 Skills system prompt", prompt_len);
     }
@@ -209,7 +246,7 @@ async fn chat_stream(
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
     {
         let mut streams = state.active_streams.lock().await;
-        streams.insert("chat".to_string(), cancel_tx);
+        streams.insert(CANCEL_STREAM_KEY.to_string(), cancel_tx);
     }
 
     // 组装真实能力并委托给 agent loop 引擎
@@ -221,7 +258,7 @@ async fn chat_stream(
         mcp: &state.mcp,
     };
     let config = agent_loop::AgentLoopConfig {
-        max_iterations: if agent_mode { 10 } else { 1 },
+        max_iterations: if agent_mode { AGENT_MAX_ITERATIONS } else { CHAT_MAX_ITERATIONS },
         agent_mode,
         ..Default::default()
     };
@@ -250,20 +287,19 @@ pub(crate) async fn run_completion(
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(String, String, Vec<ToolCall>), String> {
     let url = format!("{}/chat/completions", request.api_base.trim_end_matches('/'));
-    let client = reqwest::Client::new();
 
     let mut body = serde_json::json!({
         "model": request.model,
         "messages": messages.iter().map(msg_to_value).collect::<Vec<_>>(),
         "stream": true,
-        "temperature": 0.7,
-        "max_tokens": 4096,
+        "temperature": DEFAULT_TEMPERATURE,
+        "max_tokens": DEFAULT_MAX_TOKENS,
     });
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools.to_vec());
     }
 
-    let response = client
+    let response = HTTP_CLIENT
         .post(&url)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", request.api_key))
@@ -274,7 +310,9 @@ pub(crate) async fn run_completion(
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = response.text().await.map_err(|e| {
+            McpError::llm_api_error(status.as_u16(), &format!("(无法读取响应体: {e})")).to_string()
+        })?;
         let short: String = body.chars().take(300).collect();
         return Err(McpError::llm_api_error(status.as_u16(), &short).to_string());
     }
@@ -443,13 +481,13 @@ fn finalize_tool_calls(accs: Vec<ToolCallAcc>) -> Vec<ToolCall> {
 async fn cleanup(app: &AppHandle, state: &tauri::State<'_, AppState>) {
     let _ = app.emit("stream-done", StreamDone);
     let mut streams = state.active_streams.lock().await;
-    streams.remove("chat");
+    streams.remove(CANCEL_STREAM_KEY);
 }
 
 #[tauri::command]
 async fn cancel_chat(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let streams = state.active_streams.lock().await;
-    if let Some(cancel) = streams.get("chat") {
+    if let Some(cancel) = streams.get(CANCEL_STREAM_KEY) {
         let _ = cancel.send(true);
     }
     Ok(())
@@ -659,10 +697,14 @@ pub fn run() {
                     .join("data")
             });
             if !app_data.exists() {
-                fs::create_dir_all(&app_data).unwrap_or_else(|e| {
-                    eprintln!("[Agent] 无法创建数据目录 {:?}: {}", app_data, e);
-                });
-                println!("[Agent] 已创建数据目录: {:?}", app_data);
+                if let Err(e) = fs::create_dir_all(&app_data) {
+                    eprintln!(
+                        "[Agent] 无法创建数据目录 {:?}: {}，应用可能无法保存数据",
+                        app_data, e
+                    );
+                } else {
+                    println!("[Agent] 已创建数据目录: {:?}", app_data);
+                }
             }
 
             // 后台启动 Code Server（热备，应用打开时 IDE 秒开）

@@ -236,11 +236,7 @@ pub async fn plugins_install(
 
 /// 从 URL 下载 zip 包并解压到目标目录
 async fn download_and_extract_plugin(plugin_dir: &PathBuf, url: &str) -> Result<(), String> {
-    let client = reqwest::Client::builder()
-        .user_agent("agent-desktop/0.3.0")
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("构建 HTTP 客户端失败: {}", e))?;
+    let client = crate::build_market_client(60)?;
 
     let resp = client
         .get(url)
@@ -482,11 +478,7 @@ async fn fetch_npm_plugins() -> Result<Vec<NpmPackageInfo>, String> {
 
     let mut all_packages: Vec<NpmPackageInfo> = Vec::new();
     let mut seen = HashSet::new();
-    let client = reqwest::Client::builder()
-        .user_agent("agent-desktop/0.3.0")
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("构建 HTTP 客户端失败: {}", e))?;
+    let client = crate::build_market_client(10)?;
 
     for url in &urls {
         let resp = client.get(*url).send().await.map_err(|e| e.to_string())?;
@@ -520,7 +512,7 @@ async fn fetch_github_plugins() -> Result<Vec<GitHubRepo>, String> {
 
     let mut all_repos: Vec<GitHubRepo> = Vec::new();
     let client = reqwest::Client::builder()
-        .user_agent("agent-desktop/0.3.0")
+        .user_agent(crate::USER_AGENT)
         .default_headers({
             let mut h = reqwest::header::HeaderMap::new();
             h.insert(
