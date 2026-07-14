@@ -589,3 +589,14 @@ pub async fn code_server_stop(app: AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// 应用退出时清理 code-server 子进程（不关窗口，仅杀进程）
+pub async fn shutdown() {
+    let mut proc = CS_PROCESS.lock().await;
+    if let Some(mut child) = proc.take() {
+        eprintln!("[CodeServer] 终止子进程...");
+        let _ = child.kill();
+        let _ = child.wait();
+        eprintln!("[CodeServer] 子进程已终止");
+    }
+}

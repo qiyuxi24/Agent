@@ -1,6 +1,6 @@
 # Agent Desktop — 开发路线图 & TODO
 
-> 最后更新：2026-07-09
+> 最后更新：2026-07-14
 
 ---
 
@@ -48,6 +48,15 @@
 ### 插件系统
 - [x] 基础框架（`plugins.rs` + `PluginsPanel.tsx`）— 占位实现，待完善
 
+### IDE（code-server）
+- [x] code-server v4.127.0 完整 VS Code 内核
+- [x] 独立 Tauri 窗口 + 后台热备 + 秒开
+- [x] 完整 VS Code 插件生态（.vsix）
+
+### 深度思考
+- [x] ThinkingBlock 折叠面板 + reasoning_content 解析
+- [x] 前端/后端双端事件（ThinkingStart/Delta/Stop）
+
 ### 基础设施
 - [x] Tauri v2 + React + TypeScript + Rust
 - [x] SQLite 持久化（对话 + 设置）
@@ -55,21 +64,25 @@
 - [x] Error Boundary
 - [x] .gitignore / CHANGELOG / README
 - [x] 子进程隐藏控制台窗口 — 已覆盖现有代码（⚠️ 后续新增 Command 需持续加 `creation_flags(0x08000000)`）
+- [x] **子进程 Layer 2**：应用退出时自动清理所有子进程
+  - [x] `code_server.rs`：`shutdown()` 从全局静态取出并 kill 子进程
+  - [x] `mcp.rs`：`McpManager::shutdown()` 遍历 kill 所有 MCP 子进程
+  - [x] `lib.rs`：`on_window_event(CloseRequested)` 钩子触发清理
+  - [x] `main.rs`：`run()` 返回后兜底清理 code-server
+
 
 ---
 
 ## 近期 TODO（P0）
 
-### 子进程管理 — 后续两层
+### 子进程管理 — Layer 3（后续）
 
 > Windows 子进程窗口闪现问题分三层解决：
-> - [!] **Layer 1**：`CREATE_NO_WINDOW` — 隐藏子进程窗口（已覆盖现有代码，后续新增 `Command` 需持续加 flag）
-> - [ ] **Layer 2**：**进程生命周期管理** — 应用退出时自动清理所有子进程
->   - [ ] `code_server.rs`：Drop 时清理 `CS_PROCESS`
->   - [ ] `mcp.rs`：`McpManager::drop()` 遍历 kill 所有 MCP 子进程
->   - [ ] `ide.rs`：`run_compiled` 等编译型执行在 panic/取消时清理临时文件
->   - [ ] 方案：Rust `Drop` trait + `#[cfg(windows)]` Job Object（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）
-> - [ ] **Layer 3**：**静默启动 + 退出清理验证** — 端到端测试确保零残留窗口
+> - [x] **Layer 1**：`CREATE_NO_WINDOW` — 隐藏子进程窗口（已覆盖现有代码，后续新增 `Command` 需持续加 flag）
+> - [x] **Layer 2**：**进程生命周期管理** — 应用退出时自动清理所有子进程（CloseRequested 钩子 + shutdown 方法 + main.rs 兜底）
+> - [ ] **Layer 3**：**静默启动 + 退出清理验证**
+>   - [ ] Windows Job Object：`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 确保父进程退出时所有子进程树被系统回收（兜底 Layer 2）
+>   - [ ] 优雅关闭：先发 SIGTERM/关闭信号等待 2s，超时后再 start_kill（目前直接强杀）
 >   - [ ] 测试：启动应用 → 打开 IDE (code-server) → 运行代码 → 关闭应用 → 确认无残留进程
 >   - [ ] 测试：Agent 模式触发 MCP 工具调用 → 中途取消 → 确认 MCP 子进程被终止
 >   - [ ] 测试：编译型语言执行超时 → 确认 taskkill 子进程树完整清理
@@ -84,11 +97,20 @@
 - [ ] MCP Server 环境变量加密存储（目前明文存在 store.json）
 - [ ] 更多内置 MCP Server（playwright、filesystem 增强版）
 
+### IDE 遗留项
+- [ ] 插件/设置持久化（重启不丢失已装扩展和配置）
+- [ ] 主题与 Agent Desktop 自动同步（dark/light）
+- [ ] 扩展市场默认配置（预装推荐插件列表）
+- [ ] 系统原生目录选择对话框（接入 tauri-plugin-dialog）
+- [ ] Agent ↔ IDE 联动协议（Agent 打开文件/跳转行号/运行命令）
+- [ ] IDE 内选中代码 → 发给指定 Agent 处理
+
 ### 知识库 RAG（V0.3）
-- [ ] 文档导入（PDF/Word/TXT/Markdown）
-- [ ] 向量嵌入（本地 embedding 模型）
-- [ ] 向量检索 + LLM 问答
+- [x] 文档导入（PDF/Word/TXT/Markdown）— 通过 RagPanel 上传
+- [x] 向量嵌入（本地 embedding 模型）— fastembed + BGE 中文模型
+- [x] 向量检索 + LLM 问答 — LanceDB + text-splitter 语义分块
 - [ ] 文件变更自动增量索引
+- [ ] 支持更多文档格式（图片 OCR、HTML、EPUB）
 
 ---
 
@@ -201,6 +223,12 @@ Agent 集群管理器
 - [ ] 代码签名（Windows + macOS）
 - [ ] 安装包构建 CI/CD
 - [ ] 应用商店上架（Microsoft Store / Mac App Store）
+
+---
+
+## 技术债（需重构）
+
+- [ ] **深度思考与 SSE 解析解耦**：`lib.rs` 的 `run_completion()` 中 thinking 解析与 SSE 逻辑耦合；前端 `ChatView.tsx` 中 Tauri 事件监听和 fetch SSE 回调有两套重复的思考处理代码。应抽为独立 `ThinkingParser`。
 
 ---
 

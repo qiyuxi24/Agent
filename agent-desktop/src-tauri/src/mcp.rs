@@ -828,6 +828,22 @@ impl McpManager {
         self.tool_cache.lock().await.clear();
         eprintln!("[MCP] 工具调用缓存已清空");
     }
+
+    /// 应用退出时清理所有 MCP 子进程
+    pub async fn shutdown(&self) {
+        let mut servers = self.servers.lock().await;
+        if servers.is_empty() {
+            return;
+        }
+        eprintln!("[MCP] 正在关闭 {} 个服务器...", servers.len());
+        for (name, client) in servers.iter_mut() {
+            eprintln!("[MCP] 终止子进程: {}", name);
+            client.kill();
+        }
+        servers.clear();
+        self.tool_cache.lock().await.clear();
+        eprintln!("[MCP] 所有服务器已关闭");
+    }
 }
 
 impl Default for McpManager {

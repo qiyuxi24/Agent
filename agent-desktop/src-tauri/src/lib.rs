@@ -729,6 +729,22 @@ pub fn run() {
             code_server::code_server_open_ide_window,
             code_server::code_server_read_logs,
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // 阻止默认关闭，先清理子进程
+                api.prevent_close();
+                let handle = window.app_handle().clone();
+                let main_window = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = handle.state::<AppState>();
+                    eprintln!("[Agent] 正在清理子进程...");
+                    state.mcp.shutdown().await;
+                    code_server::shutdown().await;
+                    eprintln!("[Agent] 子进程清理完毕，退出应用");
+                    main_window.destroy().ok();
+                });
+            }
+        })
         .setup(|app| {
             // 首次启动：自动创建应用数据目录
             let app_data = app.path().app_data_dir().unwrap_or_else(|_| {
@@ -760,4 +776,9 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// 供 main.rs 兜底清理：终止 code-server 子进程
+pub async fn shutdown_code_server() {
+    code_server::shutdown().await;
 }
