@@ -24,10 +24,10 @@
   --palette-gray-600: #4b5563;
   --palette-gray-700: #374151;
 
-  /* Accent — Indigo */
-  --palette-indigo-400: #818cf8;
-  --palette-indigo-500: #6366f1;
-  --palette-indigo-600: #4f46e5;
+  /* Accent — Bear Brown（Votek 品牌色） */
+  --palette-brown-400: #daa06d;
+  --palette-brown-500: #c08040;
+  --palette-brown-600: #9e6530;
 
   /* Semantic: Success — Green */
   --palette-green-400: #4ade80;
@@ -49,8 +49,8 @@
   /* Semantic: Info — Sky */
   --palette-sky-500: #0ea5e9;
 
-  /* Component: Bubble — Blue */
-  --palette-blue-50: #e8f0fe;
+  /* Component: Bubble — warm cream */
+  --palette-warm-50: #faf3ea;
 
   /* Component: IDE/Code Server — Blue */
   --palette-blue-300: #28b4ff;
@@ -88,8 +88,8 @@
    ═══════════════════════════════════════════ */
 :root,
 .theme-light {
-  --color-accent:        var(--palette-indigo-500);
-  --color-accent-hover:  var(--palette-indigo-600);
+  --color-accent:        var(--palette-brown-500);
+  --color-accent-hover:  var(--palette-brown-600);
   --color-success:       var(--palette-green-500);
   --color-success-dark:  var(--palette-green-600);
   --color-danger:        var(--palette-red-500);
@@ -108,8 +108,8 @@
 }
 
 .theme-dark {
-  --color-accent:        var(--palette-indigo-400);
-  --color-accent-hover:  var(--palette-indigo-500);
+  --color-accent:        var(--palette-brown-400);
+  --color-accent-hover:  var(--palette-brown-500);
   --color-success:       var(--palette-green-500);
   --color-success-dark:  var(--palette-green-600);
   --color-danger:        var(--palette-red-400);
@@ -136,7 +136,7 @@
   --bg-primary:           var(--palette-white);
   --bg-secondary:         var(--palette-gray-50);
   --bg-sidebar:           var(--palette-gray-100);
-  --bg-bubble-user:       var(--palette-blue-50);
+  --bg-bubble-user:       var(--palette-warm-50);
   --bg-bubble-assistant:  var(--palette-white);
   --bg-hover:             rgba(0, 0, 0, 0.04);
   --bg-elevated:          var(--palette-white);
@@ -153,7 +153,9 @@
   /* Accent（保留旧名兼容，指向 semantic 层） */
   --accent:        var(--color-accent);
   --accent-hover:  var(--color-accent-hover);
-  --accent-light:  rgba(99, 102, 241, 0.12);
+  --accent-light:  rgba(192, 128, 64, 0.12);
+  --accent-ring:   rgba(192, 128, 64, 0.08);
+  --accent-ring-strong: rgba(192, 128, 64, 0.25);
 
   /* Danger（保留旧名兼容） */
   --danger:        var(--color-danger);
@@ -179,10 +181,11 @@
   --code-header-white: var(--palette-white);
 
   /* Shadows */
-  --shadow-sm:   0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md:   0 4px 6px -1px rgba(0, 0, 0, 0.10);
-  --shadow-dark: 0 4px 20px rgba(0, 0, 0, 0.25);
-  --shadow-input:0 2px 4px rgba(0, 0, 0, 0.03);
+  --shadow-sm:    0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md:    0 4px 6px -1px rgba(0, 0, 0, 0.10);
+  --shadow-dark:  0 4px 20px rgba(0, 0, 0, 0.25);
+  --shadow-input: 0 2px 4px rgba(0, 0, 0, 0.03);
+  --shadow-focus: 0 4px 16px rgba(0, 0, 0, 0.06);
 
   /* Radii */
   --radius:    12px;
@@ -207,7 +210,9 @@
 
   --accent:        var(--color-accent);
   --accent-hover:  var(--color-accent-hover);
-  --accent-light:  rgba(129, 140, 248, 0.15);
+  --accent-light:  rgba(218, 160, 109, 0.15);
+  --accent-ring:   rgba(218, 160, 109, 0.08);
+  --accent-ring-strong: rgba(218, 160, 109, 0.25);
 
   --danger:        var(--color-danger);
   --danger-hover:  var(--color-danger-hover);
@@ -221,8 +226,8 @@
 /* ─── System mode: auto-follow OS preference ─── */
 @media (prefers-color-scheme: dark) {
   :root:not(.theme-light):not(.theme-dark) {
-    --color-accent:        var(--palette-indigo-400);
-    --color-accent-hover:  var(--palette-indigo-500);
+    --color-accent:        var(--palette-brown-400);
+    --color-accent-hover:  var(--palette-brown-500);
     --color-danger:        var(--palette-red-400);
     --color-danger-hover:  var(--palette-red-500);
     --color-warning:       var(--palette-amber-500);
@@ -243,7 +248,9 @@
 
     --accent:        var(--color-accent);
     --accent-hover:  var(--color-accent-hover);
-    --accent-light:  rgba(129, 140, 248, 0.15);
+    --accent-light:  rgba(218, 160, 109, 0.15);
+    --accent-ring:   rgba(218, 160, 109, 0.08);
+    --accent-ring-strong: rgba(218, 160, 109, 0.25);
 
     --danger:        var(--color-danger);
     --danger-hover:  var(--color-danger-hover);

@@ -61,7 +61,7 @@ try {
 // ③ npm dependencies
 // ============================================================
 console.log(`\n${CYAN}[3/4] npm dependencies${RESET}`);
-const desktopDir = join(ROOT, 'agent-desktop');
+const desktopDir = ROOT;  // ROOT is now agent-desktop/ directly
 if (!existsSync(join(desktopDir, 'node_modules'))) {
   warn('node_modules/ not found. Will auto-install during build.');
 } else {

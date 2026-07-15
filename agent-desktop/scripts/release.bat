@@ -1,6 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
 
+REM Ensure working dir is agent-desktop/
+cd /d "%~dp0.."
+
 :: ============================================================
 ::  Votek — 发布脚本
 ::
@@ -84,7 +87,7 @@ if "%MODE%"=="--dry" (
 :: ==== ① 更新版本号 ====
 echo [1/4] 更新版本号到 %VERSION%...
 
-set "CONF=agent-desktop\src-tauri\tauri.conf.json"
+set "CONF=src-tauri\tauri.conf.json"
 if not exist "%CONF%" (
     echo [ERROR] 找不到 %CONF%
     exit /b 1
@@ -119,7 +122,7 @@ echo   已创建标签 v%VERSION%
 if "%MODE%"=="--skip" goto :push
 
 echo [3/4] 本地构建安装包...
-cd /d "%~dp0..\agent-desktop"
+cd /d "%~dp0.."
 
 if not exist "node_modules\" (
     echo   安装 npm 依赖...
@@ -142,7 +145,7 @@ cd /d "%~dp0.."
 
 :: 复制安装包到 releases/ 目录
 if not exist "releases\" mkdir "releases"
-set "SRC=agent-desktop\src-tauri\target\release\bundle\nsis\Votek_%VERSION%_x64-setup.exe"
+set "SRC=src-tauri\target\release\bundle\nsis\Votek_%VERSION%_x64-setup.exe"
 set "DST=releases\Votek_%VERSION%_x64-setup.exe"
 copy /y "%SRC%" "%DST%" >nul 2>&1
 echo   安装包已复制到: %DST%

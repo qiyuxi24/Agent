@@ -24,10 +24,10 @@ export const palette = {
     700: "#374151",
   },
 
-  indigo: {
-    400: "#818cf8",
-    500: "#6366f1",
-    600: "#4f46e5",
+  brown: {
+    400: "#daa06d",
+    500: "#c08040",
+    600: "#9e6530",
   },
 
   green: {
@@ -55,8 +55,11 @@ export const palette = {
     500: "#0ea5e9",
   },
 
+  warm: {
+    50: "#faf3ea",
+  },
+
   blue: {
-    50:  "#e8f0fe",
     300: "#28b4ff",
     400: "#1a8fff",
     500: "#007acc",
@@ -87,8 +90,8 @@ export const palette = {
 
 /** Light-theme semantic colors */
 export const semanticLight = {
-  accent:       palette.indigo[500],
-  accentHover:  palette.indigo[600],
+  accent:       palette.brown[500],
+  accentHover:  palette.brown[600],
   success:      palette.green[500],
   successDark:  palette.green[600],
   danger:       palette.red[500],
@@ -112,7 +115,7 @@ export const tokensLight = {
   bgPrimary:          palette.white,
   bgSecondary:        palette.gray[50],
   bgSidebar:          palette.gray[100],
-  bgBubbleUser:       palette.blue[50],
+  bgBubbleUser:       palette.warm[50],
   bgBubbleAssistant:  palette.white,
   bgHover:            "rgba(0, 0, 0, 0.04)",
   bgElevated:         palette.white,
@@ -131,6 +134,10 @@ export const tokensLight = {
   warningBg:     "rgba(217, 119, 6, 0.10)",
   brandBg:       "rgba(124, 58, 237, 0.10)",
 
+  accentLight:      "rgba(192, 128, 64, 0.12)",
+  accentRing:       "rgba(192, 128, 64, 0.08)",
+  accentRingStrong: "rgba(192, 128, 64, 0.25)",
+
   radius:    "12px",
   radiusSm:  "8px",
 } as const;
@@ -138,8 +145,8 @@ export const tokensLight = {
 /** Dark-theme component tokens */
 export const tokensDark = {
   ...semanticLight,
-  accent:       palette.indigo[400],
-  accentHover:  palette.indigo[500],
+  accent:       palette.brown[400],
+  accentHover:  palette.brown[500],
   danger:       palette.red[400],
   dangerHover:  palette.red[500],
   warning:      palette.amber[500],
@@ -160,4 +167,8 @@ export const tokensDark = {
   borderColor: palette.dark[400],
 
   dangerBg: "rgba(239, 68, 68, 0.08)",
+
+  accentLight:      "rgba(218, 160, 109, 0.15)",
+  accentRing:       "rgba(218, 160, 109, 0.08)",
+  accentRingStrong: "rgba(218, 160, 109, 0.25)",
 } as const;

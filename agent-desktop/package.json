@@ -8,9 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "download:code-server": "node ../scripts/download-code-server.mjs",
-    "setup:code-server": "node ../scripts/download-code-server.mjs",
-    "sync-branding": "node ../scripts/sync-branding.mjs"
+    "download:code-server": "node scripts/download-code-server.mjs",
+    "setup:code-server": "node scripts/download-code-server.mjs",
+    "sync-branding": "node scripts/sync-branding.mjs"
   },
   "engines": {
     "node": ">=18 <=22",

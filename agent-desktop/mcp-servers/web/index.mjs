@@ -60,12 +60,39 @@ function decodeHTML(s) {
     .replace(/&nbsp;/g, " ");
 }
 
+/**
+ * 带超时的 fetch 封装
+ * @param {string} url
+ * @param {RequestInit} options
+ * @param {number} timeoutMs 超时毫秒数
+ */
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } catch (e) {
+    if (e.name === "AbortError") {
+      throw new Error(`请求超时 (${timeoutMs / 1000}s)`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function webSearch(query, limit = 5) {
   const max = Math.min(Math.max(limit | 0, 1), 10);
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; AgentDesktop/0.2)" },
-  });
+  const res = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; Votek/0.3; +https://github.com/346379/Agent)" },
+  }, 15000);
+
+  if (!res.ok) {
+    throw new Error(`DuckDuckGo 搜索失败: HTTP ${res.status}`);
+  }
+
   const html = await res.text();
 
   const results = [];
@@ -88,18 +115,47 @@ async function webSearch(query, limit = 5) {
 }
 
 async function fetchUrl(url) {
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; AgentDesktop/0.2)" },
-  });
-  const contentType = res.headers.get("content-type") || "";
-  if (!contentType.includes("html") && !contentType.includes("text")) {
-    return `该 URL 返回的内容类型不支持直接读取：${contentType}`;
+  // 验证 URL 格式
+  let targetUrl;
+  try {
+    targetUrl = new URL(url);
+    if (!["http:", "https:"].includes(targetUrl.protocol)) {
+      return `不支持的协议: ${targetUrl.protocol}（仅支持 http/https）`;
+    }
+  } catch {
+    return `无效的 URL 格式: "${url}"。请提供完整的 http:// 或 https:// 链接。`;
   }
+
+  const res = await fetchWithTimeout(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; Votek/0.3; +https://github.com/346379/Agent)",
+      "Accept": "text/html, text/plain, application/json, application/xml, */*",
+      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    },
+    redirect: "follow",
+  }, 30000);
+
+  if (!res.ok) {
+    return `HTTP ${res.status} ${res.statusText}: 无法获取该 URL（可能不存在、需要登录或被屏蔽）`;
+  }
+
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("html") && !contentType.includes("text")
+      && !contentType.includes("json") && !contentType.includes("xml")) {
+    const contentLength = res.headers.get("content-length") || "未知";
+    return `该 URL 返回的内容类型为 ${contentType}（大小 ${contentLength} 字节），无法直接以文本形式读取。`;
+  }
+
   const html = await res.text();
   let text = decodeHTML(stripTags(html));
   text = text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   const max = 8000;
-  if (text.length > max) text = text.slice(0, max) + "\n...（内容已截断）";
+  if (text.length > max) text = text.slice(0, max) + "\n...（内容已截断，原文更长）";
+
+  if (!text.trim()) {
+    return "页面内容为空（可能是需要 JavaScript 渲染的单页应用，或重定向到了空白页）。";
+  }
+
   return text;
 }
 

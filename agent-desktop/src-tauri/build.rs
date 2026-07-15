@@ -2,7 +2,7 @@
 ///
 /// 仅负责检测 + 提示，不做实际下载/编译。
 /// 所有 code-server 准备统一由 scripts/download-code-server.mjs 负责。
-/// 原生模块清单来自仓库根 build.config.json（单一真相源），通过
+/// 原生模块清单来自 agent-desktop/build.config.json（单一真相源），通过
 /// include_str! 在编译时嵌入并解析，消除与 download-code-server.mjs 的重复。
 use std::path::Path;
 
@@ -96,7 +96,7 @@ fn main() {
         println!("cargo:warning=└─────────────────────────────────────────────");
     } else {
         // 从 build.config.json（单一真相源）读取原生模块清单
-        let config = include_str!("../../build.config.json");
+        let config = include_str!("../build.config.json");
         let modules = parse_native_modules(config);
         if modules.is_empty() {
             // 解析失败时回退到硬编码兜底 + 编译警告

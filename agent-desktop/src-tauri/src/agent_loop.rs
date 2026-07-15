@@ -1,6 +1,6 @@
 //! Agent Loop 引擎（think → act → observe 循环）
 //!
-//! 设计参考（均为 `agent-loop-reference/community/` 下的开源实现）：
+//! 设计参考（均为 `reference/agent-loop/community/` 下的开源实现）：
 //! - `mini_agent/core.py` 的 `run_agent()`：干净的「思考→动作→观察」循环 +
 //!   **依赖注入**（provider / tool_dispatcher 可替换）→ 本模块的 `LlmClient` / `ToolExecutor` trait。
 //! - `mini_agent/reliability.py`：`with_retry`（指数退避+抖动）、`_RetryingProvider`（LLM 重试）、
@@ -46,32 +46,29 @@ pub struct ToolOutcome {
 /// Loop 配置（护栏 + 可靠性参数）
 #[derive(Debug, Clone)]
 pub struct AgentLoopConfig {
-    /// 最大循环轮次（agent=10 / chat=1）
+    /// 最大循环轮次
     pub max_iterations: usize,
-    /// 工具结果超过此长度则截断后回传（防止上下文爆炸，参考 mini_agent 的 result 截断思想）
+    /// 工具结果超过此长度则截断后回传（防止上下文爆炸）
     pub max_tool_result_chars: usize,
-    /// 墙钟时间上限（秒），参考 mini-swe-agent 的 wall_time_limit_seconds
+    /// 墙钟时间上限（秒）
     pub wall_time_limit_secs: u64,
-    /// 是否并行执行同一轮内的多个工具调用（对齐 OpenAI Agents SDK 并行 tool 调用）
+    /// 是否并行执行同一轮内的多个工具调用
     pub parallel_tools: bool,
-    /// LLM 调用失败（网络/HTTP 错误）最大重试次数，参考 reliability.py `_RetryingProvider`
+    /// LLM 调用失败（网络/HTTP 错误）最大重试次数
     pub llm_max_retries: u32,
-    /// 工具调用失败（仅 retryable 错误）最大重试次数，参考 reliability.py `with_retry`
+    /// 工具调用失败（仅 retryable 错误）最大重试次数
     pub tool_max_retries: u32,
-    /// 是否为 agent 模式（false 时忽略工具调用、首轮即结束，保持原 chat 行为）
-    pub agent_mode: bool,
 }
 
 impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
-            max_iterations: 10,
+            max_iterations: 200,
             max_tool_result_chars: 8000,
             wall_time_limit_secs: 300,
             parallel_tools: true,
             llm_max_retries: 3,
             tool_max_retries: 2,
-            agent_mode: true,
         }
     }
 }
@@ -237,6 +234,34 @@ async fn stream_content_as_thinking(app: Option<&AppHandle>, content: &str) {
     }
 }
 
+/// 将最终答案逐块以 stream-token 事件流式推送，模拟真实 LLM 流式输出
+///
+/// 与 `stream_content_as_thinking` 类似，但发射的是 `stream-token`
+/// （答案框消费）而非 `thinking-delta`（思考面板消费）。
+/// 每块约 10 字符，块间延迟 10ms，模拟 ~100 字符/秒的打字速度。
+async fn stream_final_answer(app: Option<&AppHandle>, content: &str) {
+    const CHUNK_SIZE: usize = 10;
+    let chars: Vec<char> = content.chars().collect();
+    let mut offset = 0;
+
+    while offset < chars.len() {
+        let end = (offset + CHUNK_SIZE).min(chars.len());
+        let chunk: String = chars[offset..end].iter().collect();
+
+        emit(
+            app,
+            "stream-token",
+            StreamToken { token: chunk },
+        );
+
+        offset = end;
+
+        if offset < chars.len() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+}
+
 /// Agent Loop 主循环
 pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
     let LoopContext {
@@ -248,6 +273,9 @@ pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
         executor,
         cancel,
     } = ctx;
+
+    eprintln!("[AgentLoop] 启动 工具={} 消息={} max_iter={}",
+        tools.len(), initial_messages.len(), config.max_iterations);
 
     let mut messages = initial_messages;
     let start = Instant::now();
@@ -283,23 +311,29 @@ pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
             return Ok(());
         }
 
-        // ── THINK：调用 LLM（带指数退避重试，参考 _RetryingProvider）──
-        // chat 模式：content 实时流为答案（stream_content=true）。
-        // agent 模式：content 先静默缓冲（stream_content=false），待判定「中间轮 vs 终止轮」
-        //             后再回放——中间轮→思考面板（推理草稿），终止轮→答案框（最终答案）。
-        let stream_content = !config.agent_mode;
+        // ── THINK：调用 LLM（带指数退避重试）──
+        // content 先静默缓冲（stream_content=false），待判定「中间轮 vs 终止轮」
+        // 后再回放——中间轮→思考面板，终止轮→答案框。
+        eprintln!("[AgentLoop] 轮次 {}/{} 正在调用 LLM (messages={})...",
+            iteration + 1, config.max_iterations, messages.len());
+        let stream_content = false;
         let resp = match llm_complete_retried(app, llm, &messages, &tools, cancel, &config, stream_content)
             .await
         {
-            Ok(r) => r,
+            Ok(r) => {
+                eprintln!("[AgentLoop] LLM 返回 content={} chars reasoning={} chars tool_calls={}",
+                    r.content.len(), r.reasoning.len(), r.tool_calls.len());
+                r
+            }
             Err(e) => {
+                eprintln!("[AgentLoop] LLM 调用最终失败: {e}");
                 emit(app, "stream-error", StreamError { error: e });
                 emit(app, "stream-done", StreamDone);
                 return Ok(());
             }
         };
 
-        // 轮次标记（前端可显示「第 N 轮思考」）
+        // 轮次标记
         emit(
             app,
             "agent-iteration",
@@ -316,24 +350,32 @@ pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
             resp.tool_calls.clone(),
         ));
 
-        // chat 模式：content 已实时流出，本轮即最终答案
-        if !config.agent_mode {
-            emit(app, "stream-done", StreamDone);
-            return Ok(());
-        }
-
-        // ── agent 模式：区分「终止轮（最终答案）」与「中间轮（推理草稿）」──
+        // 区分「终止轮（最终答案）」与「中间轮（推理草稿）」
         if resp.tool_calls.is_empty() {
-            // 终止轮：本轮 content 就是面向用户的最终答案 → 回放为 stream-token
+            eprintln!("[AgentLoop] 终止轮：无工具调用 content={} chars reasoning={} chars",
+                resp.content.len(), resp.reasoning.len());
             emit(app, "final-answer-start", FinalAnswerStart);
-            if !resp.content.is_empty() {
-                emit(
-                    app,
-                    "stream-token",
-                    StreamToken {
-                        token: resp.content.clone(),
-                    },
-                );
+
+            // 决定最终答案内容：
+            //   - 优先 content（模型的正式回复）
+            //   - 如果 content 为空但 reasoning 不为空 → 推理即答案
+            //     （DeepSeek R1 有时思考完不输出 content，但 reasoning 里已有完整答案）
+            //   - 两者都为空 → 告知用户
+            let final_answer = if !resp.content.is_empty() {
+                resp.content.as_str()
+            } else if !resp.reasoning.is_empty() {
+                eprintln!("[AgentLoop] content 为空，回退使用 reasoning 作为最终答案 ({} chars)",
+                    resp.reasoning.len());
+                resp.reasoning.as_str()
+            } else {
+                ""
+            };
+
+            if !final_answer.is_empty() {
+                stream_final_answer(app, final_answer).await;
+            } else {
+                let fallback = "（模型未生成回复内容，请尝试重新提问或检查 API Key / 配额）";
+                emit(app, "stream-token", StreamToken { token: fallback.to_string() });
             }
             emit(app, "stream-done", StreamDone);
             return Ok(());
@@ -342,7 +384,6 @@ pub async fn run_agent_loop(ctx: LoopContext<'_>) -> Result<(), String> {
         // 中间轮：content 是 agent 决定调用工具前的推理草稿 → 逐块流式回放到思考面板
         if !resp.content.is_empty() {
             emit(app, "thinking-start", ThinkingStart);
-            // 逐块发送，模拟流式打字效果
             stream_content_as_thinking(app, &resp.content).await;
             emit(
                 app,

@@ -106,8 +106,8 @@ Agent/
 ├── README.md                   # 本文件
 ├── CHANGELOG.md                # 版本历史
 ├── RELEASE.md                  # 发布操作指南
-├── branding.json               # 品牌名称真相源（改名字改此处）
-├── build.config.json           # 构建配置真相源（版本/原生模块/Node 要求）
+├── agent-desktop/branding.json       # 品牌名称真相源（改名字改此处）
+├── agent-desktop/build.config.json   # 构建配置真相源（版本/原生模块/Node 要求）
 ├── .nvmrc                      # Node.js 22 版本锁定
 ├── start-dev.bat               # 一键开发环境
 ├── build.bat                   # 完整打包
@@ -138,7 +138,7 @@ Agent/
 │           ├── plugins.rs      # 插件框架
 │           ├── pet.rs          # 桌面宠物
 │           └── error_codes.rs  # 14 类 MCP 错误码
-├── agent-loop-reference/       # Agent Loop 学习参考（第三方）
+├── reference/agent-loop/       # Agent Loop 学习参考（第三方）
 └── .codebuddy/                 # 团队工作日志 + 项目记忆（gitignore）
 ```
 

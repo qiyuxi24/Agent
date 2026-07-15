@@ -21,7 +21,7 @@ const VERSION = process.argv[2] || CONFIG.codeServer.version;
 const IS_CHECK = process.argv.includes('--check');
 const IS_FORCE = process.argv.includes('--force');
 const NATIVE_MODULES = CONFIG.codeServer.nativeModules;
-const TARGET_DIR = join(PROJECT_ROOT, 'agent-desktop', 'src-tauri', 'binaries');
+const TARGET_DIR = join(PROJECT_ROOT, 'src-tauri', 'binaries');
 const RELEASE_DIR = join(TARGET_DIR, 'code-server', 'release');
 const ENTRY_JS = join(RELEASE_DIR, 'out', 'node', 'entry.js');
 const TARBALL = join(TARGET_DIR, 'package.tar.gz');
@@ -308,7 +308,7 @@ function patchCodeServerBranding() {
     // 3. 替换浏览器图标（favicon / PWA icons）
     const mediaDir = join(RELEASE_DIR, 'src', 'browser', 'media');
     // 用项目的熊图标 SVG 作为 favicon
-    const bearIconPath = join(PROJECT_ROOT, 'agent-desktop', 'src-tauri', 'icons', 'icon.svg');
+    const bearIconPath = join(PROJECT_ROOT, 'src-tauri', 'icons', 'icon.svg');
     if (existsSync(bearIconPath) && existsSync(mediaDir)) {
         try {
             const bearSvg = readFileSync(bearIconPath, 'utf-8');

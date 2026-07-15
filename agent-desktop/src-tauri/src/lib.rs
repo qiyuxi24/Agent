@@ -26,11 +26,9 @@ use std::fs;
 use std::time::Instant;
 use tools::ToolRegistry;
 
-// ── 全局常量（魔术数字提取） ──
-/// Agent 模式最大迭代轮数
-const AGENT_MAX_ITERATIONS: usize = 10;
-/// Chat 模式 = 单轮（不走工具循环）
-const CHAT_MAX_ITERATIONS: usize = 1;
+// ── 全局常量 ──
+/// Agent Loop 最大迭代轮数
+const MAX_ITERATIONS: usize = 200;
 /// LLM 请求温度
 const DEFAULT_TEMPERATURE: f64 = 0.7;
 /// LLM 最大输出 token 数
@@ -42,7 +40,16 @@ const CANCEL_STREAM_KEY: &str = "chat";
 pub(crate) const USER_AGENT: &str = "votek/0.3.0";
 
 /// 复用 reqwest Client（内建连接池），避免每次 LLM 调用重新建立 TCP 连接
-static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+///
+/// 设置连接超时 10s + 读取超时 120s（LLM 流式 token 可长达数分钟）。
+/// 注：不使用整体 request timeout，因为 LLM 流式响应可能持续很久。
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(120))
+        .build()
+        .expect("构建 HTTP Client 失败，请检查网络环境")
+});
 
 /// 构建用于市场抓取的 HTTP Client（统一 user_agent + timeout）
 pub(crate) fn build_market_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
@@ -59,14 +66,6 @@ pub struct ChatRequest {
     pub api_key: String,
     pub model: String,
     pub messages: Vec<ChatMessage>,
-    /// 对话模式："agent" = 启用 MCP 工具循环；"chat" = 纯对话（无工具、无 skills 注入）
-    #[serde(default = "default_chat_mode")]
-    pub mode: String,
-}
-
-/// 默认模式：保持原有行为（agent）
-fn default_chat_mode() -> String {
-    "agent".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -221,24 +220,17 @@ struct ToolCallAcc {
 }
 
 /// 准备 agent loop 上下文：聚合所有工具（MCP + 原生） + 注入 Skills prompt + 准备 messages。
-/// 不涉及生命周期敏感数据（llm/executor/cancel 由调用方在栈上创建）。
 async fn prepare_loop_messages(
     app: &AppHandle,
     registry: &ToolRegistry,
     request: &ChatRequest,
-    agent_mode: bool,
 ) -> (Vec<ChatMessage>, Vec<Value>) {
-    let tools = if agent_mode {
-        registry.all_tools().await
-    } else {
-        Vec::new()
-    };
+    let tools = registry.all_tools().await;
+    eprintln!("[chat_stream] 已准备 {} 个工具, Skills prompt={} bytes",
+        tools.len(),
+        skills::get_active_system_prompt(app).len());
 
-    let skills_prompt = if agent_mode {
-        skills::get_active_system_prompt(app)
-    } else {
-        String::new()
-    };
+    let skills_prompt = skills::get_active_system_prompt(app);
     let mut messages = request.messages.clone();
     if !skills_prompt.is_empty() {
         let prompt_len = skills_prompt.len();
@@ -264,10 +256,11 @@ async fn chat_stream(
     state: tauri::State<'_, AppState>,
     request: ChatRequest,
 ) -> Result<(), String> {
-    let agent_mode = request.mode == "agent";
+    eprintln!("[chat_stream] 收到请求 model={} api_base={} messages={}",
+        request.model, request.api_base, request.messages.len());
 
     // 1. 准备消息和工具（走统一 ToolRegistry）
-    let (messages, tools) = prepare_loop_messages(&app, &state.tools, &request, agent_mode).await;
+    let (messages, tools) = prepare_loop_messages(&app, &state.tools, &request).await;
 
     // 2. 注册取消信号
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
@@ -283,8 +276,7 @@ async fn chat_stream(
     };
     let executor = agent_loop::RegistryToolExecutor { registry: &state.tools };
     let config = agent_loop::AgentLoopConfig {
-        max_iterations: if agent_mode { AGENT_MAX_ITERATIONS } else { CHAT_MAX_ITERATIONS },
-        agent_mode,
+        max_iterations: MAX_ITERATIONS,
         ..Default::default()
     };
     let ctx = agent_loop::LoopContext {
@@ -305,11 +297,9 @@ async fn chat_stream(
 
 /// 调用一次 LLM 流式接口，实时推送思考 token（reasoning_content），并收集 content / tool_calls
 ///
-/// `stream_content` 控制普通 `content` 的实时推送策略（思考链 reasoning_content 始终实时推送）：
-/// - `true`（chat 模式）：content 实时以 `stream-token` 推到答案框（逐字流式）。
-/// - `false`（agent 模式）：content 仅静默累积、不实时 emit；由调用方（agent loop）在判定
-///   本轮是「中间轮」还是「终止轮」后再决定归属——中间轮回放到思考面板，终止轮回放为最终答案。
-///   这样可避免中间轮的推理草稿污染最终答案框。
+/// `stream_content` 控制普通 `content` 的实时推送策略：
+/// - `true`：实时以 `stream-token` 推送到答案框（逐字流式）。
+/// - `false`：仅静默累积，由 agent loop 判定本轮是中间轮还是终止轮后再决定归属。
 ///
 /// 返回值：(content, reasoning_content, tool_calls)
 pub(crate) async fn run_completion(
@@ -321,6 +311,8 @@ pub(crate) async fn run_completion(
     stream_content: bool,
 ) -> Result<(String, String, Vec<ToolCall>), String> {
     let url = format!("{}/chat/completions", request.api_base.trim_end_matches('/'));
+    eprintln!("[LLM] POST {} (model={} messages={} tools={})",
+        url, request.model, messages.len(), tools.len());
 
     let mut body = serde_json::json!({
         "model": request.model,
@@ -342,6 +334,7 @@ pub(crate) async fn run_completion(
         .await
         .map_err(|e| McpError::llm_network(&e.to_string()).to_string())?;
 
+    eprintln!("[LLM] 响应状态: {} {}", response.status().as_u16(), response.status().canonical_reason().unwrap_or(""));
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.map_err(|e| {
@@ -516,10 +509,11 @@ fn finalize_tool_calls(accs: Vec<ToolCallAcc>) -> Vec<ToolCall> {
         .collect()
 }
 
-async fn cleanup(app: &AppHandle, state: &tauri::State<'_, AppState>) {
-    let _ = app.emit("stream-done", StreamDone);
+async fn cleanup(_app: &AppHandle, state: &tauri::State<'_, AppState>) {
+    // 不再重复 emit stream-done：run_agent_loop 的每个出口都已经 emit 过
     let mut streams = state.active_streams.lock().await;
     streams.remove(CANCEL_STREAM_KEY);
+    eprintln!("[chat_stream] 清理完毕，stream-done 已由 agent loop 发出");
 }
 
 #[tauri::command]

@@ -18,7 +18,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 echo ========================================
-echo   Output: agent-desktop\src-tauri\target\release\bundle\
+echo   Output: src-tauri\target\release\bundle\
 echo.
 echo   Quick UI-only update: build-frontend.bat
 echo ========================================

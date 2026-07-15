@@ -55,7 +55,7 @@ while True:
 ## 三、本目录内容
 
 ```
-agent-loop-reference/
+reference/agent-loop/
 ├── README.md                    # 本文件：调研 + 说明
 ├── requirements.txt             # 依赖（openai SDK）
 ├── reused/

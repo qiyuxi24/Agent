@@ -40,7 +40,7 @@ if errorlevel 1 (
 )
 
 echo [Votek] Regenerating all platform icons (replaces every icon file)...
-cd /d "%ROOT%\agent-desktop"
+cd /d "%ROOT%"
 call npx tauri icon src-tauri\icons\icon.svg
 if errorlevel 1 (
   echo [Votek] ERROR: tauri icon failed.

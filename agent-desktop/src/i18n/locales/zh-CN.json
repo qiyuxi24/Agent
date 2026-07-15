@@ -33,7 +33,9 @@
       "subtitle": "在下方输入消息，与 AI 助手交流"
     },
     "input": {
-      "placeholder": "输入消息... (Enter 发送，Shift+Enter 换行)"
+      "placeholder": "输入消息...",
+      "hint": "Enter ↵ 发送，Shift+Enter 换行",
+      "queued": "{{count}} 条消息排队中"
     },
     "thinking": "思考中...",
     "send": "发送消息",

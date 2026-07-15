@@ -607,5 +607,5 @@
 /* --- 服务器卡片展开状态 --- */
 .mcp-server-card.expanded {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(79, 140, 255, .1);
+  box-shadow: 0 0 0 1px var(--accent-ring);
 }

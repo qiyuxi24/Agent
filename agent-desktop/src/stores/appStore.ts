@@ -100,9 +100,6 @@ interface AppState {
   persistErrorCount: number;
   sidebarCollapsed: boolean;
 
-  // 对话模式：聊天（纯对话）/ Agent（启用 MCP 工具循环）
-  chatMode: "chat" | "agent";
-
   // 工作空间
   workspaceId: string | null;
   workspaceName: string;
@@ -142,9 +139,6 @@ interface AppState {
 
   // 侧边栏折叠
   toggleSidebar: () => void;
-
-  // 动作 - 对话模式切换
-  setChatMode: (mode: "chat" | "agent") => void;
 
   // 动作 - 工作空间
   setWorkspace: (id: string, name: string, path: string) => void;
@@ -241,7 +235,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   ready: false,
   persistErrorCount: 0,
   sidebarCollapsed: false,
-  chatMode: "agent",
   workspaceId: null,
   workspaceName: "",
   workspacePath: "",
@@ -499,11 +492,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // ---- 对话模式切换 ----
 
-  setChatMode: (mode) => {
-    set({ chatMode: mode });
-    scheduleSave();
-  },
-
   // ---- 工作空间操作 ----
 
   setWorkspace: (id, name, path) => {
@@ -537,7 +525,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
       const activeProviderId = (await s.get<string | null>("activeProviderId")) || providers[0]?.id || null;
       const sidebarCollapsed = (await s.get<boolean>("sidebarCollapsed")) || false;
-      const chatMode = ((await s.get<string>("chatMode")) || "agent") as "chat" | "agent";
       const mcpServers = (await s.get<McpServerUI[]>("mcpServers")) || [];
       const mcpSeeded = (await s.get<boolean>("mcpSeeded")) || false;
       const workspaceId = (await s.get<string | null>("workspaceId")) || null;
@@ -577,7 +564,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         providers,
         activeProviderId,
         sidebarCollapsed,
-        chatMode,
         mcpServers: seededMcp,
         mcpSeeded: true,
         workspaceId,
@@ -619,7 +605,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       await s.set("providers", safeProviders);
       await s.set("activeProviderId", state.activeProviderId);
       await s.set("sidebarCollapsed", state.sidebarCollapsed);
-      await s.set("chatMode", state.chatMode);
       await s.set("mcpServers", state.mcpServers);
       await s.set("mcpSeeded", state.mcpSeeded);
       await s.set("workspaceId", state.workspaceId);

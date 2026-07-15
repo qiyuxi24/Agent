@@ -610,5 +610,174 @@ pub fn default_native_tools(
         }),
     ));
 
+    // 11. web_fetch — 抓取网页内容（原生实现，使用 reqwest，不依赖 MCP）
+    tools.push((
+        "native_web_fetch".into(),
+        "抓取并读取指定 URL 的网页内容，返回纯文本（去除 HTML 标签）。支持 HTML/文本/JSON 类型。自带 30 秒超时。".into(),
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "要抓取的网页 URL" },
+                "max_chars": { "type": "integer", "description": "最大返回字符数，默认 8000", "default": 8000 }
+            },
+            "required": ["url"]
+        }),
+        Arc::new(|args: String| {
+            Box::pin(async move {
+                let v: Value =
+                    serde_json::from_str(&args).map_err(|e| format!("参数解析失败: {}", e))?;
+                let url = v["url"]
+                    .as_str()
+                    .ok_or_else(|| "缺少 'url' 参数".to_string())?;
+                let max_chars = v["max_chars"].as_u64().map(|n| n as usize).unwrap_or(8000);
+
+                // 使用独立的 reqwest client（带超时，不走项目全局的 LazyLock）
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(30))
+                    .user_agent("Mozilla/5.0 (compatible; Votek/0.3; +https://github.com/346379/Agent)")
+                    .build()
+                    .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+
+                let resp = client.get(url).send().await.map_err(|e| {
+                    if e.is_timeout() {
+                        "请求超时（30 秒），目标服务器无响应".to_string()
+                    } else if e.is_connect() {
+                        format!("无法连接到服务器: {e}")
+                    } else {
+                        format!("网络请求失败: {e}")
+                    }
+                })?;
+
+                let status = resp.status();
+                if !status.is_success() {
+                    return Err(format!(
+                        "HTTP {} {} — 无法获取该 URL（可能不存在或需要登录）",
+                        status.as_u16(),
+                        status.canonical_reason().unwrap_or("")
+                    ));
+                }
+
+                let content_type = resp
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
+
+                // 非文本类型直接返回摘要
+                if !content_type.contains("html")
+                    && !content_type.contains("text")
+                    && !content_type.contains("json")
+                    && !content_type.contains("xml")
+                {
+                    let cl = resp.content_length().map(|n| n.to_string()).unwrap_or_else(|| "未知".into());
+                    return Ok(format!(
+                        "该 URL 返回的内容类型为 {}（大小约 {} 字节），无法直接以文本形式读取。",
+                        content_type, cl
+                    ));
+                }
+
+                let raw = resp.text().await.map_err(|e| format!("读取响应体失败: {e}"))?;
+
+                // 根据内容类型处理
+                let raw_text = if content_type.contains("html") {
+                    strip_html_tags(&raw)
+                } else {
+                    raw
+                };
+
+                // 压缩空白
+                let text = compress_whitespace(&raw_text);
+
+                // 截断
+                let result = if text.len() > max_chars {
+                    let truncated = &text[..max_chars];
+                    format!("{}…\n[已截断，原始长度 {} 字符]", truncated, text.len())
+                } else {
+                    text
+                };
+
+                if result.trim().is_empty() {
+                    Ok("页面内容为空（可能是需要 JavaScript 渲染的单页应用）".to_string())
+                } else {
+                    Ok(result)
+                }
+            })
+        }),
+    ));
+
     tools
+}
+
+/// 去除 HTML 标签，返回纯文本
+fn strip_html_tags(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut in_script_style = false;
+    let mut tag_name = String::new();
+
+    for ch in html.chars() {
+        if ch == '<' {
+            in_tag = true;
+            tag_name.clear();
+        } else if ch == '>' && in_tag {
+            in_tag = false;
+            let tn = tag_name.to_lowercase();
+            in_script_style = tn == "script" || tn == "style";
+            tag_name.clear();
+        } else if in_tag {
+            if ch != '/' && !ch.is_whitespace() {
+                tag_name.push(ch);
+            }
+            // 处理自闭合标签
+            if ch == '/' && tag_name.is_empty() {
+                // skip
+            }
+        } else if !in_script_style {
+            result.push(ch);
+        }
+    }
+
+    // 解码基本 HTML 实体
+    let result = result
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&#x27;", "'")
+        .replace("&nbsp;", " ");
+
+    result
+}
+
+/// 压缩多余空白：多空格→单空格，多换行→双换行
+fn compress_whitespace(text: &str) -> String {
+    // 先规范化所有空白
+    let mut result = String::with_capacity(text.len());
+    let mut prev_was_newline = false;
+    let mut newline_count = 0u32;
+
+    for ch in text.chars() {
+        if ch == '\n' || ch == '\r' {
+            newline_count += 1;
+            if newline_count <= 2 {
+                result.push('\n');
+                prev_was_newline = true;
+            }
+        } else if ch.is_whitespace() {
+            if !prev_was_newline && !result.ends_with(' ') {
+                result.push(' ');
+            }
+            newline_count = 0;
+            prev_was_newline = false;
+        } else {
+            result.push(ch);
+            newline_count = 0;
+            prev_was_newline = false;
+        }
+    }
+
+    result.trim().to_string()
 }

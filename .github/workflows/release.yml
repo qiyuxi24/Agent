@@ -72,6 +72,7 @@ jobs:
 
       # ⑦ 下载 code-server + 安装 Votek Companion 扩展（缓存命中时自动跳过）
       - name: Download code-server & install companion
+        working-directory: agent-desktop
         run: node scripts/download-code-server.mjs
 
       # ⑧ 构建 + 打包

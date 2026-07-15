@@ -13,7 +13,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = join(__dirname, '..');
+const PROJECT_ROOT = join(__dirname, '..');  // agent-desktop/
 
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
@@ -24,12 +24,12 @@ const RESET = '\x1b[0m';
 function log(msg, color = '') { console.log(`${color}${msg}${RESET}`); }
 
 // ── 路径 ──
-const COMPANION_DIR = join(PROJECT_ROOT, 'votek-companion');
+const COMPANION_DIR = join(PROJECT_ROOT, '..', 'votek-companion');  // 仓库根目录
 const COMPANION_OUT = join(COMPANION_DIR, 'out');
 const COMPANION_PKG = join(COMPANION_DIR, 'package.json');
 
 // code-server release 目录
-const CS_RELEASE = join(PROJECT_ROOT, 'agent-desktop', 'src-tauri', 'binaries', 'code-server', 'release');
+const CS_RELEASE = join(PROJECT_ROOT, 'src-tauri', 'binaries', 'code-server', 'release');
 // code-server 内置扩展目录
 const CS_EXTENSIONS = join(CS_RELEASE, 'lib', 'vscode', 'extensions');
 const TARGET_DIR = join(CS_EXTENSIONS, 'votek-companion');

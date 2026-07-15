@@ -33,7 +33,9 @@
       "subtitle": "Type a message below to chat with AI"
     },
     "input": {
-      "placeholder": "Type a message... (Enter to send, Shift+Enter for new line)"
+      "placeholder": "Type a message...",
+      "hint": "Enter ↵ to send, Shift+Enter for new line",
+      "queued": "{{count}} message(s) queued"
     },
     "thinking": "Thinking...",
     "send": "Send message",

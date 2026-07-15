@@ -80,8 +80,6 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
   const setActiveModel = useAppStore((s) => s.setActiveModel);
 
   const activeProvider = providers.find((p) => p.id === activeProviderId);
-  const chatMode = useAppStore((s) => s.chatMode);
-  const setChatMode = useAppStore((s) => s.setChatMode);
 
   // 关闭下拉菜单（点击外部）
   useEffect(() => {
@@ -276,7 +274,6 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
         api_base: activeProvider?.apiBase || "https://api.openai.com/v1",
         api_key: activeProvider?.apiKey || "",
         model: activeProvider?.activeModel || "gpt-4o",
-        mode: chatMode,
         messages: [...currentMessages, userMsg].map((m) => ({
           role: m.role,
           content: m.content,
@@ -403,7 +400,7 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
 
   const handleSend = async (content: string) => {
     const trimmed = content.trim();
-    if (!trimmed || !conversationId || isLoading) return;
+    if (!trimmed || !conversationId) return;
 
     cancelledRef.current = false;
 
@@ -434,7 +431,7 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     setShowScrollToBottom(false);
 
     try {
-      if (isTauriEnv() && chatMode === "agent") {
+      if (isTauriEnv()) {
         await handleSendViaTauri(userMsg);
       } else {
         await handleSendViaFetch(userMsg);
@@ -508,25 +505,6 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
           )}
         </div>
 
-        {/* 模式切换：聊天（纯对话）/ Agent（启用 MCP 工具循环） */}
-        <div className="mode-toggle" role="group" aria-label="对话模式">
-          <button
-            type="button"
-            className={`mode-btn ${chatMode === "chat" ? "active" : ""}`}
-            onClick={() => setChatMode("chat")}
-            disabled={!isTauriEnv()}
-          >
-            聊天
-          </button>
-          <button
-            type="button"
-            className={`mode-btn ${chatMode === "agent" ? "active" : ""}`}
-            onClick={() => setChatMode("agent")}
-            disabled={!isTauriEnv()}
-          >
-            Agent
-          </button>
-        </div>
       </div>
 
       {/* 消息区域 */}
