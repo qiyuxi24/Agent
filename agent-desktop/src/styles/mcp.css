@@ -2,7 +2,7 @@
 
 .panel-desc {
   font-size: 12px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   margin: 0 0 16px;
   line-height: 1.6;
 }
@@ -16,19 +16,19 @@
 }
 
 .mcp-server-card {
-  border: 1px solid var(--border-color, #2a2a2a);
+  border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 12px 14px;
-  background: var(--bg-elevated, #1c1c1c);
+  background: var(--bg-elevated);
   transition: border-color .15s;
 }
 
 .mcp-server-card.connected {
-  border-left: 3px solid var(--accent, #4f8cff);
+  border-left: 3px solid var(--accent);
 }
 
 .mcp-server-card.offline {
-  border-left: 3px solid var(--text-muted, #555);
+  border-left: 3px solid var(--text-muted);
   opacity: .8;
 }
 
@@ -64,13 +64,13 @@
 }
 
 .mcp-status.on {
-  background: rgba(80, 200, 120, .15);
-  color: #4ad88a;
+  background: var(--success-bg);
+  color: var(--color-success);
 }
 
 .mcp-status.off {
-  background: rgba(150, 150, 150, .15);
-  color: #999;
+  background: var(--mcp-off-bg);
+  color: var(--color-mcp-off);
 }
 
 /* 连接状态脉冲点 */
@@ -78,7 +78,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #4ad88a;
+  background: var(--color-success);
   animation: mcpDotPulse 2s ease-in-out infinite;
 }
 
@@ -90,7 +90,7 @@
 /* 工具计数 */
 .mcp-tool-count {
   font-size: 10px;
-  background: rgba(80, 200, 120, .2);
+  background: var(--mcp-tool-bg);
   padding: 1px 6px;
   border-radius: 6px;
   margin-left: 2px;
@@ -111,7 +111,7 @@
 .mcp-server-cmd {
   margin-top: 8px;
   font-size: 12px;
-  color: var(--text-secondary, #999);
+  color: var(--text-secondary);
   overflow-x: auto;
 }
 
@@ -129,7 +129,7 @@
 }
 
 .mcp-error {
-  color: #ff6b6b;
+  color: var(--color-error);
   font-size: 12px;
   margin: 8px 0;
 }
@@ -137,7 +137,7 @@
 /* --- 工具列表 --- */
 .mcp-tools-section {
   margin-top: 8px;
-  border-top: 1px solid var(--border-color, #2a2a2a);
+  border-top: 1px solid var(--border-color);
   padding-top: 16px;
 }
 
@@ -149,7 +149,7 @@
 
 .mcp-tools-empty {
   font-size: 12px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 
 .mcp-tools {
@@ -162,10 +162,10 @@
   display: flex;
   flex-direction: column;
   max-width: 240px;
-  border: 1px solid var(--border-color, #2a2a2a);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 6px 10px;
-  background: var(--bg-elevated, #1c1c1c);
+  background: var(--bg-elevated);
 }
 
 .mcp-tool-name {
@@ -177,7 +177,7 @@
 
 .mcp-tool-desc {
   font-size: 11px;
-  color: var(--text-secondary, #999);
+  color: var(--text-secondary);
   margin-top: 2px;
   line-height: 1.4;
 }
@@ -196,8 +196,8 @@
   gap: 6px;
   width: 100%;
   max-width: 640px;
-  background: var(--bg-elevated, #1c1c1c);
-  border: 1px solid var(--border-color, #2a2a2a);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 10px 12px;
 }
@@ -232,7 +232,7 @@
 .tool-step-name {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 600;
-  color: var(--accent, #4f8cff);
+  color: var(--accent);
 }
 
 .tool-step-running-label {
@@ -243,12 +243,12 @@
 
 /* 工具步骤错误状态 */
 .tool-step.error .tool-step-name {
-  color: #ff6b6b;
+  color: var(--color-error);
 }
 
 .tool-step-error {
   font-size: 11px;
-  color: #ff6b6b;
+  color: var(--color-error);
   font-weight: 600;
   white-space: nowrap;
   flex-shrink: 0;
@@ -269,7 +269,7 @@
   border: none;
   border-radius: 4px;
   background: var(--bg-primary, rgba(0, 0, 0, 0.15));
-  color: var(--text-secondary, #999);
+  color: var(--text-secondary);
   font-size: 11px;
   font-family: inherit;
   cursor: pointer;
@@ -277,7 +277,7 @@
 }
 .tool-step-section-toggle:hover {
   background: var(--bg-hover, rgba(255, 255, 255, 0.06));
-  color: var(--text-primary, #ccc);
+  color: var(--text-primary);
 }
 
 .tool-step-section-badge {
@@ -317,7 +317,7 @@
   border-radius: 4px;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--text-secondary, #aaa);
+  color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--font-mono, "Cascadia Code", "Fira Code", Consolas, monospace);
@@ -325,7 +325,7 @@
   overflow-y: auto;
 }
 .tool-step-code.error {
-  color: #ff9999;
+  color: var(--color-error);
 }
 
 /* 结果头部（含复制按钮） */
@@ -337,10 +337,10 @@
 
 .tool-step-copy-btn {
   padding: 1px 8px;
-  border: 1px solid var(--border-color, #333);
+  border: 1px solid var(--border-color);
   border-radius: 3px;
   background: transparent;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-size: 10px;
   font-family: inherit;
   cursor: pointer;
@@ -348,17 +348,17 @@
 }
 .tool-step-copy-btn:hover {
   background: var(--bg-hover, rgba(255, 255, 255, 0.06));
-  color: var(--text-primary, #ccc);
+  color: var(--text-primary);
 }
 
 /* 旧版内联结果（保留兼容） */
 .tool-step-result {
-  color: var(--text-secondary, #aaa);
+  color: var(--text-secondary);
   word-break: break-word;
 }
 
 .tool-step-result-error {
-  color: #ff9999;
+  color: var(--color-error);
   font-size: 11px;
   line-height: 1.4;
   max-height: 4.2em;
@@ -409,7 +409,7 @@
 }
 
 .mcp-market-card.connected {
-  border-left: 3px solid #4ad88a;
+  border-left: 3px solid var(--color-success);
 }
 
 .mcp-market-info {
@@ -521,8 +521,8 @@
 .mcp-env-chip {
   font-size: 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: rgba(128, 128, 255, .12);
-  color: #a0a0ff;
+  background: var(--env-chip-bg);
+  color: var(--color-env-chip);
   padding: 1px 6px;
   border-radius: 4px;
   cursor: default;
@@ -531,8 +531,8 @@
 /* --- 错误计数徽章 --- */
 .mcp-error-count {
   font-size: 10px;
-  background: rgba(255, 107, 107, .15);
-  color: #ff6b6b;
+  background: var(--danger-bg);
+  color: var(--color-error);
   padding: 1px 6px;
   border-radius: 6px;
   display: inline-flex;
@@ -544,11 +544,11 @@
 .mcp-server-error {
   margin-top: 6px;
   padding: 6px 8px;
-  background: rgba(255, 107, 107, .08);
-  border: 1px solid rgba(255, 107, 107, .2);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
   border-radius: 6px;
   font-size: 11px;
-  color: #ff9999;
+  color: var(--color-error);
   display: flex;
   align-items: flex-start;
   gap: 4px;
@@ -594,7 +594,7 @@
 
 .mcp-stderr-line {
   padding: 1px 0;
-  color: #a0c0a0;
+  color: var(--color-stderr);
   line-height: 1.5;
   word-break: break-all;
   white-space: pre-wrap;

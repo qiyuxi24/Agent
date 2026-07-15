@@ -40,18 +40,18 @@
   align-items: center;
   justify-content: center;
   border-radius: 20px;
-  background: linear-gradient(135deg, #007acc, #1a8fff);
-  color: #fff;
+  background: linear-gradient(135deg, var(--color-ide), var(--color-ide-light));
+  color: var(--text-on-accent);
   margin-bottom: 8px;
   animation: csPulse 2s ease-in-out infinite;
 }
 
 .cs-error-icon {
-  background: linear-gradient(135deg, #ef4444, #dc2626);
+  background: linear-gradient(135deg, var(--color-danger), var(--color-danger-hover));
 }
 
 @keyframes csPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 122, 204, 0.4); }
+  0%, 100% { box-shadow: 0 0 0 0 var(--color-ide-glow); }
   50% { box-shadow: 0 0 0 16px rgba(0, 122, 204, 0); }
 }
 
@@ -134,15 +134,15 @@
 
 .cs-btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-on-accent);
   border: none;
   font-weight: 600;
   padding: 12px 32px;
   font-size: 15px;
 }
 .cs-btn-primary:hover {
-  background: var(--accent-hover, #005a9e);
-  color: #fff;
+  background: var(--accent-hover);
+  color: var(--text-on-accent);
 }
 
 .cs-btn-row {
@@ -162,7 +162,7 @@
 
 .cs-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #007acc, #28b4ff);
+  background: linear-gradient(90deg, var(--color-ide), var(--color-ide-progress));
   border-radius: 4px;
   transition: width 0.3s ease;
 }
@@ -191,7 +191,7 @@
 .cs-error {
   font-size: 13px;
   color: var(--danger);
-  background: rgba(239, 68, 68, 0.08);
+  background: var(--danger-bg);
   padding: 12px 16px;
   border-radius: 8px;
   max-width: 500px;
@@ -273,10 +273,10 @@
 
 .cs-bar-btn-danger {
   color: var(--danger);
-  border-color: rgba(239, 68, 68, 0.3);
+  border-color: var(--danger-border);
 }
 .cs-bar-btn-danger:hover {
-  background: rgba(239, 68, 68, 0.1) !important;
+  background: var(--danger-bg) !important;
 }
 
 .cs-status-badge {
@@ -286,8 +286,8 @@
   border-radius: 10px;
 }
 .cs-status-badge.running {
-  color: #22c55e;
-  background: rgba(34, 197, 94, 0.1);
+  color: var(--color-success);
+  background: var(--success-bg);
 }
 
 /* ─── iframe 容器（预留：未来可能嵌入） ─── */

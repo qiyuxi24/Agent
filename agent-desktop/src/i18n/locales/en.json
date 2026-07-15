@@ -23,7 +23,8 @@
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
     "browser": "Browser",
-    "ide": "IDE"
+    "ide": "IDE",
+    "workspace": "Workspace"
   },
 
   "chat": {
@@ -35,6 +36,7 @@
       "placeholder": "Type a message... (Enter to send, Shift+Enter for new line)"
     },
     "thinking": "Thinking...",
+    "send": "Send message",
     "stop": "Stop generating",
     "scrollToBottom": "Scroll to bottom",
     "noModel": "No model configured",
@@ -264,5 +266,33 @@
     "blockedTitle": "Cannot display here",
     "blockedMessage": "This website doesn't allow embedding. Open in your external browser.",
     "searchWith": "Search"
+  },
+
+  "workspace": {
+    "title": "Workspace",
+    "desc": "Select a local folder as the AI sandbox workspace. The AI can read/write files and execute commands within this folder only.",
+    "noWorkspace": "No workspace created",
+    "noWorkspaceHint": "Click the button below to create a workspace from a local folder",
+    "create": "Create Workspace",
+    "creating": "Creating...",
+    "selectFolder": "Select Folder",
+    "folderPlaceholder": "Enter folder path or click to select...",
+    "nameLabel": "Workspace Name",
+    "namePlaceholder": "e.g. My Project, Study Notes",
+    "switchWorkspace": "Switch Workspace",
+    "currentWorkspace": "Current Workspace",
+    "path": "Path",
+    "remove": "Remove Workspace",
+    "removeConfirm": "Are you sure you want to remove this workspace? Your files will NOT be deleted — only Votek internal data will be cleaned up.",
+    "files": "Files",
+    "refresh": "Refresh",
+    "openFolder": "Open in Explorer",
+    "emptyDir": "This directory is empty",
+    "createFile": "New File",
+    "createDir": "New Folder",
+    "fileNamePlaceholder": "File name...",
+    "dirNamePlaceholder": "Folder name...",
+    "deleteFile": "Delete",
+    "deleteConfirm": "Are you sure you want to delete \"{{name}}\"?"
   }
 }

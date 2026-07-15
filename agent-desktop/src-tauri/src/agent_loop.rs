@@ -171,6 +171,37 @@ impl<'a> ToolExecutor for McpToolExecutor<'a> {
     }
 }
 
+/// 统一工具执行器：通过 ToolRegistry 分发到 MCP 或原生工具
+///
+/// 替代 McpToolExecutor，兼容 agent loop 的 ToolExecutor trait。
+/// 支持 MCP 工具（name = "server::tool"）和原生工具（name = "native_xxx"）。
+pub struct RegistryToolExecutor<'a> {
+    pub registry: &'a crate::tools::ToolRegistry,
+}
+
+impl<'a> ToolExecutor for RegistryToolExecutor<'a> {
+    fn execute<'b>(&'b self, name: &'b str, arguments: &'b str) -> BoxFuture<'b, ToolOutcome> {
+        Box::pin(async move {
+            match self.registry.execute(name, arguments).await {
+                Ok(result) => ToolOutcome {
+                    result,
+                    is_error: false,
+                    error_code: None,
+                    error_category: None,
+                    suggested_action: None,
+                },
+                Err(err_msg) => ToolOutcome {
+                    result: err_msg.clone(),
+                    is_error: true,
+                    error_code: Some("TOOL-001".into()),
+                    error_category: Some("EXECUTION_ERROR".into()),
+                    suggested_action: Some("none".into()),
+                },
+            }
+        })
+    }
+}
+
 /// 事件发射辅助：app 为 None 时跳过（测试用）
 fn emit<S: serde::Serialize + Clone>(app: Option<&AppHandle>, event: &str, payload: S) {
     if let Some(app) = app {

@@ -7,7 +7,9 @@ import { parseSSEStream } from "../lib/sse";
 import MessageContent from "../components/chat/MessageContent";
 import type { ThinkingStats } from "../components/chat/ThinkingBlock";
 import type { ToolStep } from "../components/chat/ToolStepsBlock";
-import { SendIcon, StopIcon, ModelIcon, ChevronDownIcon, CheckIcon, ArrowDownIcon, EmptyChatIcon } from "../components/Icons";
+import { ModelIcon, ChevronDownIcon, CheckIcon, ArrowDownIcon, EmptyChatIcon } from "../components/Icons";
+import ChatInput from "../components/chat/ChatInput";
+import type { ChatInputHandle } from "../components/chat/ChatInput";
 
 // 稳定空数组引用，避免 Zustand selector 每次返回新引用导致无限重渲染
 const EMPTY_MESSAGES: Message[] = [];
@@ -29,13 +31,12 @@ export interface ChatViewHandle {
 
 const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ conversationId }, ref) {
   const { t } = useTranslation();
-  const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const chatInputRef = useRef<ChatInputHandle>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const cancelledRef = useRef(false);
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -43,16 +44,20 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
 
   // 工具调用步骤（MCP tool-call / tool-result 事件驱动，瞬时展示，不进 store）
   const [toolSteps, setToolSteps] = useState<ToolStep[]>([]);
+  // 用 ref 跟踪最新步骤，避免 stream-done 中的闭包过期问题
+  const toolStepsRef = useRef<ToolStep[]>([]);
 
   // 思考状态（thinking-start/delta/stop 事件驱动）
   const [thinkingContent, setThinkingContent] = useState("");
   const [thinkingStats, setThinkingStats] = useState<ThinkingStats | undefined>();
   const [isThinking, setIsThinking] = useState(false);
+  // 用 ref 累积思考内容，避免 React state 闭包问题
+  const thinkingContentRef = useRef("");
 
   // 暴露方法给父组件（快捷键用）
   useImperativeHandle(ref, () => ({
     focusInput: () => {
-      textareaRef.current?.focus();
+      chatInputRef.current?.focus();
     },
     toggleModelPicker: () => {
       setShowModelPicker((prev) => !prev);
@@ -70,6 +75,7 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
   const addMessage = useAppStore((s) => s.addMessage);
   const updateLastAssistantMessage = useAppStore((s) => s.updateLastAssistantMessage);
   const updateLastAssistantThinking = useAppStore((s) => s.updateLastAssistantThinking);
+  const updateLastAssistantToolSteps = useAppStore((s) => s.updateLastAssistantToolSteps);
   const setActiveProvider = useAppStore((s) => s.setActiveProvider);
   const setActiveModel = useAppStore((s) => s.setActiveModel);
 
@@ -121,6 +127,20 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     }
   }, [currentMessages]);
 
+  // 流式输出期间：监听消息容器尺寸变化，保持滚底
+  // （Markdown 渲染、代码块展开等会导致内容高度变化，message 数组不变）
+  useEffect(() => {
+    if (!isLoading || !messagesContainerRef.current) return;
+    const el = messagesContainerRef.current;
+    const observer = new ResizeObserver(() => {
+      if (shouldAutoScroll.current) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isLoading]);
+
   // 停止流式时恢复自动滚动，隐藏按钮
   useEffect(() => {
     if (!isLoading) {
@@ -146,7 +166,9 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
 
     let fullContent = "";
     setToolSteps([]);
+    toolStepsRef.current = [];
     setThinkingContent("");
+    thinkingContentRef.current = "";
     setThinkingStats(undefined);
     setIsThinking(false);
 
@@ -155,28 +177,39 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
       if (cancelledRef.current) return;
       setIsThinking(true);
       setThinkingContent("");
+      thinkingContentRef.current = "";
       setThinkingStats(undefined);
     });
 
     const unlistenThinkDelta = await listen<{ delta: string }>("thinking-delta", (event) => {
       if (cancelledRef.current) return;
-      setThinkingContent((prev) => prev + event.payload.delta);
-      updateLastAssistantThinking(conversationId!, event.payload.delta);
+      thinkingContentRef.current += event.payload.delta;
+      const full = thinkingContentRef.current;
+      setThinkingContent(full);
+      // 传递完整累积内容，而非单个 delta（避免 store 覆盖问题）
+      updateLastAssistantThinking(conversationId!, full);
     });
 
-    const unlistenThinkStop = await listen<{ tokens: number; duration_ms: number }>("thinking-stop", () => {
-      // thinking-stop 在 content 或 tool_calls 开始时就触发，stats 可能还不完整
-      // 这里记录时间戳，最终 stats 在 stream-done 时写入 message
+    const unlistenThinkStop = await listen<{ tokens: number; duration_ms: number }>("thinking-stop", (event) => {
+      // 思考结束时立即标记，让 ThinkingBlock 切换到 "done" 状态
+      // （此时可能进入 tool-call 阶段或直接输出最终答案）
+      setIsThinking(false);
+      setThinkingStats({
+        tokens: event.payload.tokens,
+        durationMs: event.payload.duration_ms,
+      });
     });
 
     const unlistenTc = await listen<{ name: string; arguments: string }>(
       "tool-call",
       (event) => {
         if (cancelledRef.current) return;
-        setToolSteps((prev) => [
-          ...prev,
-          { name: event.payload.name, args: event.payload.arguments, status: "running" },
-        ]);
+        const next = [
+          ...toolStepsRef.current,
+          { name: event.payload.name, args: event.payload.arguments, status: "running" as const },
+        ];
+        toolStepsRef.current = next;
+        setToolSteps(next);
       },
     );
 
@@ -189,19 +222,19 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     }>("tool-result", (event) => {
       if (cancelledRef.current) return;
       const { name, result, isError, error_code, error_category } = event.payload;
-      setToolSteps((prev) =>
-        prev.map((s) =>
-          s.name === name && s.status === "running"
-            ? {
-                ...s,
-                status: isError ? "error" : "done",
-                result,
-                errorCode: error_code || null,
-                errorCategory: error_category || null,
-              }
-            : s,
-        ),
+      const next = toolStepsRef.current.map((s) =>
+        s.name === name && s.status === "running"
+          ? {
+              ...s,
+              status: (isError ? "error" : "done") as ToolStep["status"],
+              result,
+              errorCode: error_code || null,
+              errorCategory: error_category || null,
+            }
+          : s,
       );
+      toolStepsRef.current = next;
+      setToolSteps(next);
     });
 
     const unlisten1 = await listen<{ token: string }>("stream-token", (event) => {
@@ -216,16 +249,23 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
       setIsLoading(false);
     });
 
-    // agent 多轮结束、进入面向用户的最终答案阶段：停止思考态，后续 stream-token 即正式答案
+    // agent 多轮结束、进入面向用户的最终答案阶段
     const unlistenFinal = await listen("final-answer-start", () => {
       if (cancelledRef.current) return;
+      // thinking-stop 已处理 isThinking=false，这里确保工具步骤区收起
       setIsThinking(false);
     });
 
     const unlisten3 = await listen("stream-done", () => {
-      if (thinkingContent && conversationId) {
-        // 写入最终 thinking 内容到 message
-        updateLastAssistantThinking(conversationId, thinkingContent, thinkingStats);
+      const finalThinking = thinkingContentRef.current || thinkingContent;
+      if (finalThinking && conversationId) {
+        // 写入最终 thinking 内容到 message（含 stats）
+        updateLastAssistantThinking(conversationId, finalThinking, thinkingStats);
+      }
+      // 持久化工具调用步骤（过滤掉 running 状态，只保留 done/error）
+      const finalSteps = toolStepsRef.current.filter((s) => s.status !== "running");
+      if (finalSteps.length > 0 && conversationId) {
+        updateLastAssistantToolSteps(conversationId, finalSteps);
       }
       setIsThinking(false);
       setIsLoading(false);
@@ -266,6 +306,7 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     const thinkingStartTime = Date.now();
 
     setThinkingContent("");
+    thinkingContentRef.current = "";
     setThinkingStats(undefined);
     setIsThinking(false);
 
@@ -303,8 +344,10 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
             setIsThinking(true);
           }
           fullThinking += token;
+          thinkingContentRef.current = fullThinking;
           setThinkingContent(fullThinking);
-          updateLastAssistantThinking(conversationId!, token);
+          // 传递完整累积内容
+          updateLastAssistantThinking(conversationId!, fullThinking);
         },
         onToken: (token) => {
           if (isThinking) {
@@ -358,8 +401,8 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     setIsLoading(false);
   };
 
-  const handleSend = async () => {
-    const trimmed = input.trim();
+  const handleSend = async (content: string) => {
+    const trimmed = content.trim();
     if (!trimmed || !conversationId || isLoading) return;
 
     cancelledRef.current = false;
@@ -377,7 +420,6 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     };
 
     addMessage(conversationId, userMsg);
-    setInput("");
 
     const assistantMsg: Message = {
       id: crypto.randomUUID(),
@@ -392,8 +434,6 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     setShowScrollToBottom(false);
 
     try {
-      // Agent 模式走 Tauri 后端（含 MCP 工具 + Skills + 工具循环）
-      // 聊天模式走纯 fetch（直连 /chat/completions，无工具调用）
       if (isTauriEnv() && chatMode === "agent") {
         await handleSendViaTauri(userMsg);
       } else {
@@ -403,13 +443,6 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
       const errorText = `❌ ${t("chat.error.requestFailed")}：${getErrorMessage(err)}`;
       updateLastAssistantMessage(conversationId, errorText);
       setIsLoading(false);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
     }
   };
 
@@ -529,6 +562,7 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
                     streamingThinking={thinkingContent}
                     isThinking={isThinking}
                     toolSteps={toolSteps.length > 0 ? toolSteps : undefined}
+                    storedToolSteps={msg.toolSteps}
                   />
                 </div>
               );
@@ -548,37 +582,13 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
       )}
 
       {/* 输入区域 */}
-      <div className="chat-input-area">
-        <div className="chat-input-container">
-          <textarea
-            ref={textareaRef}
-            className="chat-input"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={t("chat.input.placeholder")}
-            rows={1}
-            disabled={isLoading}
-          />
-          {isLoading ? (
-            <button
-              className="btn btn-stop"
-              onClick={handleStop}
-              title={t("chat.stop")}
-            >
-              <StopIcon size={16} />
-            </button>
-          ) : (
-            <button
-              className="btn btn-send"
-              onClick={handleSend}
-              disabled={!input.trim()}
-            >
-              <SendIcon size={20} />
-            </button>
-          )}
-        </div>
-      </div>
+      <ChatInput
+        ref={chatInputRef}
+        isLoading={isLoading}
+        onSend={handleSend}
+        onStop={handleStop}
+        placeholder={t("chat.input.placeholder")}
+      />
     </div>
   );
 });

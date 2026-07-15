@@ -23,7 +23,8 @@
     "collapseSidebar": "收起侧边栏",
     "expandSidebar": "展开侧边栏",
     "browser": "浏览器",
-    "ide": "IDE"
+    "ide": "IDE",
+    "workspace": "工作空间"
   },
 
   "chat": {
@@ -35,6 +36,7 @@
       "placeholder": "输入消息... (Enter 发送，Shift+Enter 换行)"
     },
     "thinking": "思考中...",
+    "send": "发送消息",
     "stop": "停止生成",
     "scrollToBottom": "滚动到底部",
     "noModel": "未配置模型",
@@ -264,5 +266,33 @@
     "blockedTitle": "无法在此处显示",
     "blockedMessage": "该网站不允许嵌入显示，请在外部浏览器中打开。",
     "searchWith": "搜索"
+  },
+
+  "workspace": {
+    "title": "工作空间",
+    "desc": "选择一个本地文件夹作为 AI 沙箱工作空间。AI 可以在该文件夹内读写文件、执行命令，所有操作限制在工作空间内。",
+    "noWorkspace": "尚未创建工作空间",
+    "noWorkspaceHint": "点击下方按钮，选择一个本地文件夹来创建工作空间",
+    "create": "创建工作空间",
+    "creating": "创建中...",
+    "selectFolder": "选择文件夹",
+    "folderPlaceholder": "输入文件夹路径或点击选择...",
+    "nameLabel": "工作空间名称",
+    "namePlaceholder": "例如：我的项目、学习笔记",
+    "switchWorkspace": "切换工作空间",
+    "currentWorkspace": "当前工作空间",
+    "path": "路径",
+    "remove": "删除工作空间",
+    "removeConfirm": "确定要删除此工作空间吗？不会删除文件夹中的文件，仅清理 Votek 内部数据。",
+    "files": "文件",
+    "refresh": "刷新",
+    "openFolder": "在资源管理器中打开",
+    "emptyDir": "此目录为空",
+    "createFile": "新建文件",
+    "createDir": "新建目录",
+    "fileNamePlaceholder": "文件名...",
+    "dirNamePlaceholder": "目录名...",
+    "deleteFile": "删除",
+    "deleteConfirm": "确定要删除「{{name}}」吗？"
   }
 }

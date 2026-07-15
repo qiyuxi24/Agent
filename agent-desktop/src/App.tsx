@@ -11,8 +11,9 @@ import { PanelLeftOpenIcon } from "./components/Icons";
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const BrowserPanel = lazy(() => import("./pages/BrowserPanel"));
 const IdePage = lazy(() => import("./pages/IdePage"));
+const WorkspacePage = lazy(() => import("./pages/WorkspacePage"));
 
-type Page = "chat" | "settings" | "browser" | "ide";
+type Page = "chat" | "settings" | "browser" | "ide" | "workspace";
 
 function App() {
   const { t } = useTranslation();
@@ -155,6 +156,8 @@ function App() {
               <BrowserPanel />
             ) : page === "ide" ? (
               <IdePage />
+            ) : page === "workspace" ? (
+              <WorkspacePage />
             ) : (
               <ChatView ref={chatViewRef} conversationId={activeConversationId} />
             )}

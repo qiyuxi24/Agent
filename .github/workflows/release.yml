@@ -29,11 +29,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ② 安装 Node.js
+      # ② 安装 Node.js（code-server v4.127.0 要求 Node 22）
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: agent-desktop/package-lock.json
 
@@ -61,12 +61,25 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # ⑥ 构建 + 打包
+      # ⑥ 恢复 code-server 缓存（命中则跳过下载，节省 ~54MB 流量）
+      - name: Restore code-server cache
+        uses: actions/cache@v4
+        with:
+          path: agent-desktop/src-tauri/binaries/code-server
+          key: code-server-${{ hashFiles('build.config.json') }}
+          restore-keys: |
+            code-server-
+
+      # ⑦ 下载 code-server + 安装 Votek Companion 扩展（缓存命中时自动跳过）
+      - name: Download code-server & install companion
+        run: node scripts/download-code-server.mjs
+
+      # ⑧ 构建 + 打包
       - name: Build & Bundle
         working-directory: agent-desktop
         run: npm run tauri build
 
-      # ⑦ 读取包信息
+      # ⑨ 读取包信息
       - name: Read package info
         id: pkg
         shell: pwsh
@@ -81,7 +94,7 @@ jobs:
           echo "exe=$exe" >> $env:GITHUB_OUTPUT
           echo "path=src-tauri/target/release/bundle/nsis/$exe" >> $env:GITHUB_OUTPUT
 
-      # ⑧ 创建 GitHub Release 并上传安装包
+      # ⑩ 创建 GitHub Release 并上传安装包
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -104,7 +117,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ⑨ 输出摘要
+      # ⑪ 输出摘要
       - name: Summary
         shell: pwsh
         run: |

@@ -1,6 +1,11 @@
 // code-server 下载/设置脚本 (Node.js 版本，不依赖 PowerShell)
-// 用法：node scripts/download-code-server.mjs [版本号]
-import { createWriteStream, existsSync, mkdirSync, rmSync, statSync, readFileSync, writeFileSync, readdirSync } from 'fs';
+// 用法：
+//   node scripts/download-code-server.mjs              # 自动下载配置的版本
+//   node scripts/download-code-server.mjs [版本号]      # 下载指定版本
+//   node scripts/download-code-server.mjs --check       # 检查是否有新版本可用
+//   node scripts/download-code-server.mjs --force       # 强制重新下载（即使已安装）
+
+import { createWriteStream, existsSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
@@ -13,6 +18,8 @@ const PROJECT_ROOT = join(__dirname, '..');
 const CONFIG = JSON.parse(readFileSync(join(PROJECT_ROOT, 'build.config.json'), 'utf-8'));
 
 const VERSION = process.argv[2] || CONFIG.codeServer.version;
+const IS_CHECK = process.argv.includes('--check');
+const IS_FORCE = process.argv.includes('--force');
 const NATIVE_MODULES = CONFIG.codeServer.nativeModules;
 const TARGET_DIR = join(PROJECT_ROOT, 'agent-desktop', 'src-tauri', 'binaries');
 const RELEASE_DIR = join(TARGET_DIR, 'code-server', 'release');
@@ -31,15 +38,27 @@ function log(msg, color = '') { console.log(`${color}${msg}${RESET}`); }
 
 console.log('');
 log('=== code-server 下载/设置脚本 (Node.js) ===', CYAN);
-log(`版本: v${VERSION}`);
-log(`目标: ${RELEASE_DIR}`);
+log(`配置版本: v${VERSION}`);
+log(`目标路径: ${RELEASE_DIR}`);
 
-// 检查是否已存在
-if (existsSync(ENTRY_JS)) {
+// ═══ --check 模式：检查最新版本 ═══
+if (IS_CHECK) {
+    checkForUpdates();
+    process.exit(0);
+}
+
+// 检查是否已存在（--force 模式下跳过）
+if (existsSync(ENTRY_JS) && !IS_FORCE) {
     log(`code-server v${VERSION} 已存在，跳过下载。`, GREEN);
-    log('如需重新下载，请先删除目标目录后重试。');
+    log('如需重新下载: node scripts/download-code-server.mjs --force');
+    log('如需检查更新: node scripts/download-code-server.mjs --check');
     log(`  路径: ${RELEASE_DIR}`);
     process.exit(0);
+}
+
+if (IS_FORCE && existsSync(ENTRY_JS)) {
+    log('--force 模式：删除旧版本重新下载...', YELLOW);
+    rmSync(RELEASE_DIR, { recursive: true });
 }
 
 // 创建目录
@@ -360,9 +379,126 @@ if (existsSync(ENTRY_JS)) {
     } catch {
         log('版本验证跳过（可能存在兼容性问题）', YELLOW);
     }
+
+    // === 安装 Votek Companion 扩展（agent ↔ IDE 桥接） ===
+    console.log('');
+    log('=== 安装 Votek Companion 扩展 ===', CYAN);
+    try {
+        execSync('node scripts/install-companion.mjs', {
+            cwd: PROJECT_ROOT,
+            stdio: 'inherit',
+            timeout: 180_000
+        });
+    } catch {
+        log('  Votek Companion 安装失败（可稍后手动安装）', YELLOW);
+        log('  手动安装: node scripts/install-companion.mjs', GRAY);
+    }
 } else {
     console.log('');
     log('设置失败：入口文件未找到！', RED);
     log(`预期路径: ${ENTRY_JS}`, RED);
     process.exit(1);
+}
+
+// ═══ --check: 检查最新版本 ═══
+function checkForUpdates() {
+    // 检查本地安装版本
+    let installedVersion = '(未安装)';
+    if (existsSync(ENTRY_JS)) {
+        try {
+            const ver = execSync(`node "${ENTRY_JS}" --version`, {
+                encoding: 'utf-8',
+                timeout: 15_000
+            }).trim();
+            installedVersion = ver;
+        } catch {
+            installedVersion = '(无法检测)';
+        }
+    }
+
+    log(`本地安装: ${installedVersion}`, CYAN);
+    log(`配置目标: v${CONFIG.codeServer.version}`, CYAN);
+
+    // 查询 GitHub latest release
+    log('查询 GitHub 最新版本...', YELLOW);
+    try {
+        const latestVer = fetchLatestVersion();
+        log(`GitHub 最新: ${latestVer}`, CYAN);
+
+        if (installedVersion.includes(latestVer.replace('v', '')) ||
+            installedVersion.includes(latestVer)) {
+            log('✅ 已是最新版本！', GREEN);
+        } else {
+            log(`⚠ 有新版本可用: ${latestVer}`, YELLOW);
+            log(`  更新操作:`, GRAY);
+            log(`  1. 修改 build.config.json 中 codeServer.version 为 "${latestVer.replace('v', '')}"`, GRAY);
+            log(`  2. 运行: node scripts/download-code-server.mjs --force`, GRAY);
+        }
+    } catch (e) {
+        log(`无法查询 GitHub: ${e.message}`, RED);
+        log('请手动访问 https://github.com/coder/code-server/releases 查看最新版本', GRAY);
+    }
+}
+
+function fetchLatestVersion() {
+    const options = {
+        hostname: 'api.github.com',
+        path: '/repos/coder/code-server/releases/latest',
+        headers: {
+            'User-Agent': 'votek-build-script',
+            'Accept': 'application/vnd.github+json',
+        },
+        timeout: 10_000
+    };
+
+    return new Promise((resolve, reject) => {
+        const req = https.get(options, (res) => {
+            // Handle redirect
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                resolve(fetchLatestVersionFromUrl(res.headers.location));
+                return;
+            }
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const json = JSON.parse(data);
+                    resolve(json.tag_name || json.name || 'unknown');
+                } catch {
+                    reject(new Error('解析 GitHub 响应失败'));
+                }
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(10_000, () => { req.destroy(); reject(new Error('GitHub API 超时')); });
+    });
+}
+
+function fetchLatestVersionFromUrl(url) {
+    return new Promise((resolve, reject) => {
+        const parsed = new URL(url);
+        const options = {
+            hostname: parsed.hostname,
+            path: parsed.pathname,
+            headers: {
+                'User-Agent': 'votek-build-script',
+                'Accept': 'application/vnd.github+json',
+            },
+            timeout: 10_000
+        };
+        const req = https.get(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const json = JSON.parse(data);
+                    resolve(json.tag_name || json.name || 'unknown');
+                } catch {
+                    reject(new Error('解析 GitHub 响应失败'));
+                }
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(10_000, () => { req.destroy(); reject(new Error('超时')); });
+    });
 }

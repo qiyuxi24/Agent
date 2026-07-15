@@ -12,6 +12,7 @@
 
 import type { ThinkingStats } from "./ThinkingBlock";
 import type { ToolStep } from "./ToolStepsBlock";
+import type { TimelinePhase } from "./AgentTimeline";
 
 /** 所有消息部分的联合类型 */
 export type MessagePart =
@@ -60,12 +61,14 @@ export function messageToParts(params: {
   streamingThinking?: string;
   /** 是否仍在思考阶段 */
   isThinking: boolean;
-  /** 工具调用步骤 */
+  /** 实时工具调用步骤（流式） */
   toolSteps?: ToolStep[];
+  /** 已持久化的工具调用步骤（历史消息） */
+  storedToolSteps?: ToolStep[];
 }): MessagePart[] {
   const parts: MessagePart[] = [];
 
-  const { storedThinking, thinkingStats, content, isStreaming, isLastMessage, streamingThinking, isThinking, toolSteps } = params;
+  const { storedThinking, thinkingStats, content, isStreaming, isLastMessage, streamingThinking, isThinking, toolSteps, storedToolSteps } = params;
 
   // 1) 思考部分：优先用流式内容，否则用已持久化的
   const thinkingText = isLastMessage && streamingThinking
@@ -83,11 +86,15 @@ export function messageToParts(params: {
     });
   }
 
-  // 2) 工具调用部分
-  if (toolSteps && toolSteps.length > 0) {
+  // 2) 工具调用部分：最后一条消息用实时 toolSteps，历史消息用 storedToolSteps
+  const displaySteps = isLastMessage && toolSteps && toolSteps.length > 0
+    ? toolSteps
+    : storedToolSteps;
+
+  if (displaySteps && displaySteps.length > 0) {
     parts.push({
       type: "tool_call",
-      steps: toolSteps,
+      steps: displaySteps,
     });
   }
 
@@ -98,4 +105,42 @@ export function messageToParts(params: {
   });
 
   return parts;
+}
+
+/**
+ * 将 MessagePart 列表转换为 AgentTimeline 的阶段列表。
+ * 当消息包含多阶段工作流时，用时间线统一展示。
+ */
+export function partsToTimeline(parts: MessagePart[]): TimelinePhase[] {
+  const phases: TimelinePhase[] = [];
+
+  for (const part of parts) {
+    if (part.type === "thinking") {
+      phases.push({
+        type: "thinking",
+        label: "深度思考",
+        status: part.state === "streaming" ? "active" : "done",
+        thinkingText: part.text,
+        thinkingStats: part.stats,
+      });
+    } else if (part.type === "tool_call") {
+      const hasRunning = part.steps.some((s) => s.status === "running");
+      const hasError = part.steps.some((s) => s.status === "error");
+      phases.push({
+        type: "tool",
+        label: `工具调用 (${part.steps.length})`,
+        status: hasRunning ? "active" : hasError ? "error" : "done",
+        toolSteps: part.steps,
+      });
+    } else if (part.type === "content" && part.text) {
+      phases.push({
+        type: "answer",
+        label: "最终回答",
+        status: "done",
+        answerText: part.text,
+      });
+    }
+  }
+
+  return phases;
 }

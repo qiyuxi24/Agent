@@ -24,6 +24,15 @@ export interface Message {
     tokens: number;
     durationMs: number;
   };
+  /** Agent 工具调用步骤（持久化，可回顾历史工具调用） */
+  toolSteps?: Array<{
+    name: string;
+    args: string;
+    status: "running" | "done" | "error";
+    result?: string;
+    errorCode?: string | null;
+    errorCategory?: string | null;
+  }>;
 }
 
 export type ThemeMode = "system" | "light" | "dark";
@@ -94,12 +103,18 @@ interface AppState {
   // 对话模式：聊天（纯对话）/ Agent（启用 MCP 工具循环）
   chatMode: "chat" | "agent";
 
+  // 工作空间
+  workspaceId: string | null;
+  workspaceName: string;
+  workspacePath: string;
+
   // 动作 - 对话
   setActiveConversation: (id: string) => void;
   createConversation: () => string;
   addMessage: (conversationId: string, msg: Message) => void;
   updateLastAssistantMessage: (conversationId: string, content: string) => void;
   updateLastAssistantThinking: (conversationId: string, thinking: string, stats?: { tokens: number; durationMs: number }) => void;
+  updateLastAssistantToolSteps: (conversationId: string, toolSteps: Message["toolSteps"]) => void;
   updateConversationTitle: (id: string, title: string) => void;
   deleteConversation: (id: string) => void;
   togglePinConversation: (id: string) => void;
@@ -130,6 +145,10 @@ interface AppState {
 
   // 动作 - 对话模式切换
   setChatMode: (mode: "chat" | "agent") => void;
+
+  // 动作 - 工作空间
+  setWorkspace: (id: string, name: string, path: string) => void;
+  clearWorkspace: () => void;
 
   // 动作 - 持久化
   loadFromStore: () => Promise<void>;
@@ -223,6 +242,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   persistErrorCount: 0,
   sidebarCollapsed: false,
   chatMode: "agent",
+  workspaceId: null,
+  workspaceName: "",
+  workspacePath: "",
 
   // ---- 对话操作 ----
 
@@ -299,6 +321,20 @@ export const useAppStore = create<AppState>((set, get) => ({
           thinking: thinking || (last.thinking ?? "") + (thinking ?? ""),
           thinkingStats: stats ?? last.thinkingStats,
         };
+      }
+      return { messages: { ...state.messages, [conversationId]: updated } };
+    });
+    scheduleSave();
+  },
+
+  updateLastAssistantToolSteps: (conversationId, toolSteps) => {
+    set((state) => {
+      const msgs = state.messages[conversationId] || [];
+      if (msgs.length === 0) return state;
+      const updated = [...msgs];
+      const last = updated[updated.length - 1];
+      if (last.role === "assistant") {
+        updated[updated.length - 1] = { ...last, toolSteps };
       }
       return { messages: { ...state.messages, [conversationId]: updated } };
     });
@@ -468,6 +504,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     scheduleSave();
   },
 
+  // ---- 工作空间操作 ----
+
+  setWorkspace: (id, name, path) => {
+    set({ workspaceId: id, workspaceName: name, workspacePath: path });
+    scheduleSave();
+  },
+
+  clearWorkspace: () => {
+    set({ workspaceId: null, workspaceName: "", workspacePath: "" });
+    scheduleSave();
+  },
+
   // ---- 持久化 ----
 
   loadFromStore: async () => {
@@ -492,6 +540,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       const chatMode = ((await s.get<string>("chatMode")) || "agent") as "chat" | "agent";
       const mcpServers = (await s.get<McpServerUI[]>("mcpServers")) || [];
       const mcpSeeded = (await s.get<boolean>("mcpSeeded")) || false;
+      const workspaceId = (await s.get<string | null>("workspaceId")) || null;
+      const workspaceName = (await s.get<string>("workspaceName")) || "";
+      const workspacePath = (await s.get<string>("workspacePath")) || "";
 
       // 迁移旧数据：如果有 apiKey/apiBase/model 但没 providers，自动创建默认 provider
       if (providers.length === 0) {
@@ -529,6 +580,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         chatMode,
         mcpServers: seededMcp,
         mcpSeeded: true,
+        workspaceId,
+        workspaceName,
+        workspacePath,
         ready: true,
       });
 
@@ -568,6 +622,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       await s.set("chatMode", state.chatMode);
       await s.set("mcpServers", state.mcpServers);
       await s.set("mcpSeeded", state.mcpSeeded);
+      await s.set("workspaceId", state.workspaceId);
+      await s.set("workspaceName", state.workspaceName);
+      await s.set("workspacePath", state.workspacePath);
       // 清理旧字段
       await s.delete("apiKey");
       await s.delete("apiBase");

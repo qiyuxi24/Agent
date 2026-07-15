@@ -1,0 +1,29 @@
+{
+  "name": "votek-companion",
+  "displayName": "Votek Companion",
+  "description": "IDE context bridge between code-server and the Votek AI agent. Provides real-time editor state, diagnostics, and workspace control via WebSocket. Fully decoupled - does not depend on Votek internals.",
+  "version": "0.1.0",
+  "publisher": "votek",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["*"],
+  "main": "./out/extension.js",
+  "contributes": {},
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx vsce package --no-dependencies -o votek-companion.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

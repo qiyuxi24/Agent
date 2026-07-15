@@ -1,0 +1,355 @@
+/* ===== Workspace Page ===== */
+
+.workspace-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* ── 通用表单输入（此页面独用） ── */
+.workspace-page .input {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.workspace-page .input:focus {
+  border-color: var(--accent);
+}
+.workspace-page .input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ── 空状态（无工作空间） ── */
+.workspace-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 40px;
+  text-align: center;
+  gap: 12px;
+}
+
+.workspace-empty svg {
+  color: var(--text-muted);
+  opacity: 0.6;
+  margin-bottom: 8px;
+}
+
+.workspace-empty h2 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.workspace-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  max-width: 480px;
+  line-height: 1.6;
+  margin: 4px 0 16px;
+}
+
+.workspace-create-btn {
+  padding: 10px 24px;
+  font-size: 14px;
+  gap: 8px;
+}
+
+/* ── 已有工作空间卡片 ── */
+.workspace-existing {
+  width: 100%;
+  max-width: 500px;
+  margin-bottom: 20px;
+}
+
+.workspace-existing h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 10px;
+  text-align: left;
+}
+
+.workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.workspace-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  transition: all 0.15s;
+}
+
+.workspace-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.workspace-card-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex: 1;
+  overflow: hidden;
+}
+
+.workspace-card-info svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.workspace-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.workspace-card-path {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+}
+
+/* ── 创建表单 ── */
+.workspace-create-form {
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
+.workspace-create-form label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.workspace-path-row {
+  display: flex;
+  gap: 8px;
+}
+
+.workspace-path-row .input {
+  flex: 1;
+}
+
+.workspace-path-row .btn {
+  flex-shrink: 0;
+  padding: 8px 10px;
+}
+
+.workspace-error {
+  color: var(--danger);
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
+.workspace-create-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* ── 顶部信息栏 ── */
+.workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-sidebar);
+}
+
+.workspace-header-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.workspace-header-info svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.workspace-header-info h2 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.workspace-header-path {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: block;
+  margin-top: 2px;
+}
+
+.workspace-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── 工具栏 ── */
+.workspace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+
+.workspace-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.breadcrumb-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.15s;
+}
+
+.breadcrumb-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.breadcrumb-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.breadcrumb-path {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+}
+
+.workspace-toolbar-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ── 新建输入框 ── */
+.workspace-new-item {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.workspace-new-item .input {
+  flex: 1;
+}
+
+/* ── 文件列表 ── */
+.workspace-files {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.workspace-loading,
+.workspace-empty-dir {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.workspace-file-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.workspace-file-item:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.workspace-file-item.is-dir svg {
+  color: var(--accent);
+}
+
+.workspace-file-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-file-size {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 50px;
+  text-align: right;
+}
+
+.workspace-file-delete {
+  opacity: 0;
+  width: 24px;
+  height: 24px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.workspace-file-item:hover .workspace-file-delete {
+  opacity: 1;
+}
+
+.workspace-file-delete:hover {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+/* ── 底部信息 ── */
+.workspace-footer {
+  padding: 8px 16px;
+  border-top: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-sidebar);
+}

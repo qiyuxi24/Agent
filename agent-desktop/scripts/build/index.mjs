@@ -14,9 +14,8 @@ import { fileURLToPath } from 'url';
 import { execSync, spawn } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..', '..');
-const DESKTOP = join(ROOT, 'agent-desktop');
-const CONFIG = JSON.parse(readFileSync(join(ROOT, 'build.config.json'), 'utf-8'));
+const DESKTOP = join(__dirname, '..', '..');  // agent-desktop/ (scripts/build → ../..)
+const CONFIG = JSON.parse(readFileSync(join(DESKTOP, 'build.config.json'), 'utf-8'));
 
 const CYAN = '\x1b[36m'; const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m'; const RED = '\x1b[31m'; const RESET = '\x1b[0m';
@@ -59,7 +58,7 @@ async function check() {
 async function prepare() {
   console.log(`\n${CYAN}--- Preparing code-server v${CONFIG.codeServer.version} ---${RESET}\n`);
   if (!existsSync(join(DESKTOP, 'src-tauri', 'binaries', 'code-server', 'release', 'out', 'node', 'entry.js'))) {
-    runNode(join(ROOT, 'scripts', 'download-code-server.mjs'));
+    runNode(join(DESKTOP, 'scripts', 'download-code-server.mjs'));
   } else {
     console.log(`${GREEN}code-server already installed.${RESET}\n`);
   }
@@ -117,7 +116,7 @@ async function build() {
 function runNode(script, args = []) {
   try {
     execSync(`node "${script}" ${args.join(' ')}`, {
-      cwd: ROOT,
+      cwd: DESKTOP,
       stdio: 'inherit',
       timeout: 120_000
     });

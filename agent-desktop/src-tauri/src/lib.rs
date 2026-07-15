@@ -7,19 +7,24 @@ mod mcp;
 mod pet;
 mod plugins;
 mod rag;
+mod sandbox;
 mod skills;
+mod tools;
+mod vscode_bridge;
 
 use error_codes::McpError;
 use futures::StreamExt;
-use mcp::{McpManager, McpServerConfig};
+use mcp::McpServerConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
 use std::collections::HashMap;
+use vscode_bridge::VscodeBridge;
 use std::fs;
 use std::time::Instant;
+use tools::ToolRegistry;
 
 // ── 全局常量（魔术数字提取） ──
 /// Agent 模式最大迭代轮数
@@ -215,16 +220,16 @@ struct ToolCallAcc {
     arguments: String,
 }
 
-/// 准备 agent loop 上下文：聚合 MCP 工具 + 注入 Skills prompt + 准备 messages。
+/// 准备 agent loop 上下文：聚合所有工具（MCP + 原生） + 注入 Skills prompt + 准备 messages。
 /// 不涉及生命周期敏感数据（llm/executor/cancel 由调用方在栈上创建）。
 async fn prepare_loop_messages(
     app: &AppHandle,
-    mcp: &McpManager,
+    registry: &ToolRegistry,
     request: &ChatRequest,
     agent_mode: bool,
 ) -> (Vec<ChatMessage>, Vec<Value>) {
     let tools = if agent_mode {
-        mcp.llm_tools().await
+        registry.all_tools().await
     } else {
         Vec::new()
     };
@@ -261,8 +266,8 @@ async fn chat_stream(
 ) -> Result<(), String> {
     let agent_mode = request.mode == "agent";
 
-    // 1. 准备消息和工具
-    let (messages, tools) = prepare_loop_messages(&app, &state.mcp, &request, agent_mode).await;
+    // 1. 准备消息和工具（走统一 ToolRegistry）
+    let (messages, tools) = prepare_loop_messages(&app, &state.tools, &request, agent_mode).await;
 
     // 2. 注册取消信号
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
@@ -276,7 +281,7 @@ async fn chat_stream(
         app: app.clone(),
         request: request.clone(),
     };
-    let executor = agent_loop::McpToolExecutor { mcp: &state.mcp };
+    let executor = agent_loop::RegistryToolExecutor { registry: &state.tools };
     let config = agent_loop::AgentLoopConfig {
         max_iterations: if agent_mode { AGENT_MAX_ITERATIONS } else { CHAT_MAX_ITERATIONS },
         agent_mode,
@@ -526,6 +531,158 @@ async fn cancel_chat(state: tauri::State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+// ===================== 工作空间 + 沙箱命令 =====================
+
+fn gen_id() -> String {
+    use rand::Rng;
+    let r: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(12)
+        .map(char::from)
+        .collect();
+    format!("ws-{r}")
+}
+
+/// 创建新工作空间（选择本地文件夹即创建沙箱）
+#[tauri::command]
+async fn workspace_create(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    path: String,
+) -> Result<sandbox::SandboxInfo, String> {
+    let root = std::path::Path::new(&path);
+    let id = gen_id();
+    let mut mgr = state.sandbox_manager.lock().await;
+    let info = mgr.create(&id, &name, root).map_err(|e| e.to_string())?;
+    // 自动设为当前工作空间
+    *state.current_workspace_id.lock().await = Some(id);
+    Ok(info)
+}
+
+/// 列出所有工作空间
+#[tauri::command]
+async fn workspace_list(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<sandbox::SandboxInfo>, String> {
+    let mgr = state.sandbox_manager.lock().await;
+    Ok(mgr.list())
+}
+
+/// 删除工作空间（不删用户文件，仅清理内部 .votek-sandbox）
+#[tauri::command]
+async fn workspace_remove(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let mut mgr = state.sandbox_manager.lock().await;
+    mgr.remove(&id).map_err(|e| e.to_string())?;
+    let mut cur = state.current_workspace_id.lock().await;
+    if cur.as_deref() == Some(&id) {
+        *cur = None;
+    }
+    Ok(())
+}
+
+/// 设置当前活跃工作空间
+#[tauri::command]
+async fn workspace_set_current(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    *state.current_workspace_id.lock().await = Some(id);
+    Ok(())
+}
+
+/// 获取当前活跃工作空间信息
+#[tauri::command]
+async fn workspace_get_current(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<sandbox::SandboxInfo>, String> {
+    let cur = state.current_workspace_id.lock().await;
+    let mgr = state.sandbox_manager.lock().await;
+    match cur.as_deref() {
+        Some(id) => {
+            let sb = mgr.get(id).ok_or_else(|| "工作空间不存在".to_string())?;
+            Ok(Some(sandbox::SandboxInfo {
+                id: sb.id.clone(),
+                root: sb.root.display().to_string(),
+                name: sb.root.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
+// ── 沙箱操作（作用在当前工作空间的沙箱内） ──
+
+/// 从 AppState 获取当前沙箱 ID
+async fn resolve_sandbox_id(state: &AppState) -> Result<String, String> {
+    state.current_workspace_id.lock().await.clone()
+        .ok_or_else(|| "没有选中工作空间，请先在侧边栏创建工作空间".to_string())
+}
+
+#[tauri::command]
+async fn sandbox_read_file(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    let sid = resolve_sandbox_id(&state).await?;
+    let mgr = state.sandbox_manager.lock().await;
+    mgr.read_file(&sid, &path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sandbox_write_file(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    let sid = resolve_sandbox_id(&state).await?;
+    let mgr = state.sandbox_manager.lock().await;
+    mgr.write_file(&sid, &path, &content).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sandbox_delete_file(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let sid = resolve_sandbox_id(&state).await?;
+    let mgr = state.sandbox_manager.lock().await;
+    mgr.delete_file(&sid, &path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sandbox_create_dir(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let sid = resolve_sandbox_id(&state).await?;
+    let mgr = state.sandbox_manager.lock().await;
+    mgr.create_dir(&sid, &path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sandbox_list_dir(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<Vec<sandbox::FileEntry>, String> {
+    let sid = resolve_sandbox_id(&state).await?;
+    let mgr = state.sandbox_manager.lock().await;
+    mgr.list_dir(&sid, &path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sandbox_file_tree(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<sandbox::FileEntry>, String> {
+    let sid = resolve_sandbox_id(&state).await?;
+    let mgr = state.sandbox_manager.lock().await;
+    mgr.file_tree(&sid, 200).await.map_err(|e| e.to_string())
+}
+
 // ===================== MCP 管理命令 =====================
 
 #[tauri::command]
@@ -533,7 +690,7 @@ async fn mcp_connect(
     state: tauri::State<'_, AppState>,
     config: McpServerConfig,
 ) -> Result<usize, String> {
-    state.mcp.connect(config).await.map_err(|e| e.to_string())
+    state.tools.mcp().connect(config).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -541,21 +698,21 @@ async fn mcp_disconnect(
     state: tauri::State<'_, AppState>,
     name: String,
 ) -> Result<(), String> {
-    state.mcp.disconnect(&name).await
+    state.tools.mcp().disconnect(&name).await
 }
 
 #[tauri::command]
 async fn mcp_list_servers(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<mcp::McpServerInfo>, String> {
-    Ok(state.mcp.list_servers().await)
+    Ok(state.tools.mcp().list_servers().await)
 }
 
 #[tauri::command]
 async fn mcp_list_tools(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<mcp::McpTool>, String> {
-    let servers = state.mcp.servers.lock().await;
+    let servers = state.tools.mcp().servers.lock().await;
     let mut out = Vec::new();
     for client in servers.values() {
         for t in &client.tools {
@@ -574,7 +731,8 @@ async fn mcp_call_tool(
 ) -> Result<String, String> {
     let namespaced = format!("{}::{}", server, tool);
     state
-        .mcp
+        .tools
+        .mcp()
         .call_namespaced(&namespaced, &args)
         .await
         .map_err(|e| e.to_string())
@@ -586,7 +744,7 @@ async fn mcp_server_stderr(
     state: tauri::State<'_, AppState>,
     name: String,
 ) -> Result<Vec<String>, String> {
-    Ok(state.mcp.get_stderr(&name).await)
+    Ok(state.tools.mcp().get_stderr(&name).await)
 }
 
 /// 重连指定的 MCP 服务器（使用之前保存的配置）
@@ -595,7 +753,7 @@ async fn mcp_reconnect(
     state: tauri::State<'_, AppState>,
     name: String,
 ) -> Result<usize, String> {
-    state.mcp.reconnect(&name).await.map_err(|e| e.to_string())
+    state.tools.mcp().reconnect(&name).await.map_err(|e| e.to_string())
 }
 
 /// 执行 MCP 服务器健康检查，返回已断开的服务器名称列表
@@ -605,7 +763,7 @@ async fn mcp_health_check(
     state: tauri::State<'_, AppState>,
     auto_reconnect: Option<bool>,
 ) -> Result<Vec<String>, String> {
-    Ok(state.mcp.health_check(auto_reconnect.unwrap_or(false)).await)
+    Ok(state.tools.mcp().health_check(auto_reconnect.unwrap_or(false)).await)
 }
 
 /// 清空 MCP 工具调用缓存
@@ -613,15 +771,21 @@ async fn mcp_health_check(
 async fn mcp_clear_cache(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    state.mcp.clear_cache().await;
+    state.tools.mcp().clear_cache().await;
     Ok(())
 }
 
 pub struct AppState {
     active_streams: Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>,
-    pub mcp: McpManager,
-    pub rag: rag::RagManager,
+    pub tools: ToolRegistry,
+    pub rag: Arc<rag::RagManager>,
     pub pet: pet::PetManager,
+    /// VSCode Bridge：与 code-server 中 Votek Companion 扩展通信
+    pub vscode_bridge: Arc<vscode_bridge::VscodeBridge>,
+    /// 沙箱管理器：管理所有工作空间沙箱
+    pub sandbox_manager: Mutex<sandbox::SandboxManager>,
+    /// 当前活跃工作空间 ID（内存状态，重启丢失，后续持久化到 store.json）
+    pub current_workspace_id: Mutex<Option<String>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -629,12 +793,31 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .manage(AppState {
+        .plugin(tauri_plugin_dialog::init())
+    .manage({
+        let mut registry = ToolRegistry::new();
+        let rag_manager = Arc::new(rag::RagManager::new());
+
+        // 注册原生工具（IDE 文件操作/代码执行/终端/RAG 等）
+        registry.register_native_tools(tools::default_native_tools(rag_manager.clone()));
+
+        // 创建 VSCode Bridge（伴生扩展通信通道）
+        let bridge_config = vscode_bridge::VotekBridgeConfig::new(vscode_bridge::BRIDGE_DEFAULT_PORT);
+        let vscode_bridge = VscodeBridge::new(bridge_config);
+
+        // 注册 VSCode IDE 控制工具（getActiveEditor/getDiagnostics/openFile 等）
+        vscode_bridge.register_tools(&mut registry);
+
+        AppState {
             active_streams: Mutex::new(HashMap::new()),
-            mcp: McpManager::new(),
-            rag: rag::RagManager::new(),
+            tools: registry,
+            rag: rag_manager,
             pet: pet::PetManager::default(),
-        })
+            vscode_bridge,
+            sandbox_manager: Mutex::new(sandbox::SandboxManager::new()),
+            current_workspace_id: Mutex::new(None),
+        }
+    })
         .invoke_handler(tauri::generate_handler![
             chat_stream,
             cancel_chat,
@@ -710,6 +893,18 @@ pub fn run() {
             pet::toggle_pet,
             pet::pet_interact,
             pet::get_pet_stats,
+            // 工作空间 + 沙箱
+            workspace_create,
+            workspace_list,
+            workspace_remove,
+            workspace_set_current,
+            workspace_get_current,
+            sandbox_read_file,
+            sandbox_write_file,
+            sandbox_delete_file,
+            sandbox_create_dir,
+            sandbox_list_dir,
+            sandbox_file_tree,
         ])
         .on_window_event(|window, event| {
             // 仅主窗口关闭时阻止默认行为并清理子进程；宠物窗等其它窗口直接关闭
@@ -724,7 +919,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     let state = handle.state::<AppState>();
                     eprintln!("[Agent] 正在清理子进程...");
-                    state.mcp.shutdown().await;
+                    state.tools.shutdown().await;
                     code_server::shutdown().await;
                     eprintln!("[Agent] 子进程清理完毕，退出应用");
                     main_window.destroy().ok();
@@ -751,10 +946,23 @@ pub fn run() {
                 }
             }
 
-            // 后台启动 Code Server（热备，应用打开时 IDE 秒开）
+            // 将 VSCode Bridge 配置设为全局（code_server 启动时注入环境变量用）
+            let bridge_config = {
+                let state = app.state::<AppState>();
+                state.vscode_bridge.config().clone()
+            };
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                vscode_bridge::set_global_config(bridge_config).await;
+                // 后台启动 Code Server（热备，应用打开时 IDE 秒开）
                 code_server::start_background(&app_handle).await;
+
+                // Code Server 就绪后，尝试连接 VSCode Bridge
+                let state = app_handle.state::<AppState>();
+                match state.vscode_bridge.connect().await {
+                    Ok(()) => eprintln!("[Agent] VSCode Bridge connected"),
+                    Err(e) => eprintln!("[Agent] VSCode Bridge unavailable: {} (IDE context tools will be disabled)", e),
+                }
             });
 
             // 载入持久化的宠物数值

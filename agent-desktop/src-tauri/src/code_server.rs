@@ -5,10 +5,12 @@
 //! - 应用启动时后台热备（hot standby），点击 IDE 秒开
 //! - 点击 IDE 时打开独立 Tauri 窗口，直接加载 code-server URL
 //! - 完整 VS Code 体验，100% 插件兼容
+//! - 启动时自动注入 Votek Companion 扩展的环境变量，用于 agent ↔ IDE 桥接
 //!
 //! code-server 是 Coder 公司开源的 VS Code Web 版（MIT 协议）
 //! GitHub: https://github.com/coder/code-server
 
+use crate::vscode_bridge;
 use serde::Serialize;
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -346,8 +348,8 @@ fn spawn_code_server(app: &AppHandle, workspace: &str, port: u16) -> Result<Chil
         entry_str, bind_addr, workspace
     );
 
-    StdCommand::new("node")
-        .creation_flags(0x08000000)
+    let mut cmd = StdCommand::new("node");
+    cmd.creation_flags(0x08000000)
         .arg(&entry_str)
         .arg("--bind-addr")
         .arg(&bind_addr)
@@ -360,8 +362,23 @@ fn spawn_code_server(app: &AppHandle, workspace: &str, port: u16) -> Result<Chil
         .arg(data_dir.to_string_lossy().to_string())
         .arg(workspace)
         .stdout(Stdio::from(log_file.try_clone().map_err(|e| format!("克隆日志句柄失败: {}", e))?))
-        .stderr(Stdio::from(log_file))
-        .spawn()
+        .stderr(Stdio::from(log_file));
+
+    // 注入 Votek Companion 桥接环境变量（agent ↔ IDE 通信通道）
+    // tokio runtime 已在 start_background 中初始化，可以安全使用 block_in_place
+    let bridge_config = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(vscode_bridge::get_global_config())
+    });
+    if let Some(ref cfg) = bridge_config {
+        vscode_bridge::inject_env(&mut cmd, cfg);
+        eprintln!(
+            "[CodeServer] Injected bridge env: {}={}",
+            vscode_bridge::ENV_BRIDGE_PORT,
+            cfg.port
+        );
+    }
+
+    cmd.spawn()
         .map_err(|e| format!("启动 Code Server 失败: {}", e))
 }
 

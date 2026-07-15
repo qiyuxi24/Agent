@@ -30,42 +30,64 @@
 }
 
 .btn-stop {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border: none;
-  border-radius: 8px;
-  background: var(--accent);
+  border-radius: 50%;
+  background: var(--text-secondary);
   color: #fff;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.15s;
+  transition: all 0.2s ease;
 }
 .btn-stop:hover {
-  background: var(--accent-hover);
+  background: var(--text-primary);
+  transform: scale(1.05);
 }
 
 .btn-send {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   padding: 0;
-  background: var(--accent);
-  color: #ffffff;
-  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--text-muted);
+  color: var(--text-on-accent);
+  border-radius: 50%;
   flex-shrink: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  opacity: 0.55;
 }
-.btn-send:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-send.has-content {
+  background: var(--accent);
+  opacity: 1;
+  box-shadow: 0 2px 8px var(--accent-light);
+}
+.btn-send.has-content:hover {
+  background: var(--accent-hover);
+  transform: scale(1.08);
+  box-shadow: 0 4px 14px var(--accent-light);
+}
+.btn-send.has-content:active {
+  transform: scale(0.95);
+}
 .btn-send:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 
 .btn-primary {
   padding: 10px 24px;
   background: var(--accent);
-  color: #ffffff;
+  color: var(--text-on-accent);
   border-radius: var(--radius-sm);
   font-weight: 600;
   border: 1px solid var(--accent);

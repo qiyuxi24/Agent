@@ -7,14 +7,17 @@
  * - ChatView 只负责消息列表循环，不关心每种 part 如何渲染
  * - 新增 part 类型只需在 switch 里加一个 case
  * - 每种 part 的渲染组件完全独立，无耦合
+ * - 当存在多阶段（thinking+tool+content）时，使用 AgentTimeline 统一展示工作流
  */
-import { memo } from "react";
+import { memo, useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import MarkdownRenderer from "../MarkdownRenderer";
 import ErrorBoundary from "../ErrorBoundary";
 import ThinkingBlock from "./ThinkingBlock";
 import ToolStepsBlock from "./ToolStepsBlock";
-import { messageToParts } from "./types";
+import AgentTimeline from "./AgentTimeline";
+import type { TimelinePhase } from "./AgentTimeline";
+import { messageToParts, partsToTimeline } from "./types";
 import type { MessagePart } from "./types";
 import type { ThinkingStats } from "./ThinkingBlock";
 import type { ToolStep } from "./ToolStepsBlock";
@@ -107,8 +110,10 @@ interface MessageContentProps {
   streamingThinking?: string;
   /** 是否仍在思考阶段（thinking-start 已触发但 thinking-stop 未触发） */
   isThinking: boolean;
-  /** 工具调用步骤 */
+  /** 实时工具调用步骤（流式阶段，仅最后一条消息使用） */
   toolSteps?: ToolStep[];
+  /** 已持久化的工具调用步骤（历史消息回顾） */
+  storedToolSteps?: ToolStep[];
 }
 
 /** 用 memo 避免非必要重渲染 */
@@ -122,8 +127,10 @@ const MessageContent = memo(function MessageContent({
   streamingThinking,
   isThinking,
   toolSteps,
+  storedToolSteps,
 }: MessageContentProps) {
   const { t } = useTranslation();
+  const [viewTimeline, setViewTimeline] = useState(true);
 
   // 用户消息：纯文本，不走 part 系统
   if (role === "user") {
@@ -140,19 +147,61 @@ const MessageContent = memo(function MessageContent({
     streamingThinking,
     isThinking,
     toolSteps,
+    storedToolSteps,
   });
+
+  // 当存在多个阶段（thinking + tool + content）时，提供时间线视图
+  const timeline = useMemo(() => partsToTimeline(parts), [parts]);
+  const hasWorkflow = timeline.length > 1;
 
   return (
     <div className="message-content">
-      {parts.map((part, i) => (
-        <PartRenderer
-          key={`${part.type}-${i}`}
-          part={part}
-          isLoading={isLoading}
-          isLastMessage={isLastMessage}
-          t={t}
-        />
-      ))}
+      {/* 工作流时间线视图（多阶段消息默认使用） */}
+      {hasWorkflow && viewTimeline && (
+        <>
+          <div className="view-toggle">
+            <button
+              type="button"
+              className={`view-toggle-btn active`}
+              disabled
+            >
+              时间线
+            </button>
+            <button
+              type="button"
+              className="view-toggle-btn"
+              onClick={() => setViewTimeline(false)}
+              title="切换为卡片视图"
+            >
+              卡片
+            </button>
+          </div>
+          <AgentTimeline phases={timeline} />
+        </>
+      )}
+
+      {/* 卡片视图（单阶段或无工作流时使用） */}
+      {(!hasWorkflow || !viewTimeline) &&
+        parts.map((part, i) => (
+          <PartRenderer
+            key={`${part.type}-${i}`}
+            part={part}
+            isLoading={isLoading}
+            isLastMessage={isLastMessage}
+            t={t}
+          />
+        ))}
+
+      {/* 存在工作流但用户在卡片视图时，显示切换回时间线的按钮 */}
+      {hasWorkflow && !viewTimeline && (
+        <button
+          type="button"
+          className="view-toggle-switch"
+          onClick={() => setViewTimeline(true)}
+        >
+          切换为时间线视图
+        </button>
+      )}
     </div>
   );
 });
