@@ -18,4 +18,5 @@
    未来接入内嵌编辑器时取消下行注释 */
 /* @import './ide.css'; */
 @import './rag.css';
+@import './agents.css';
 @import './scrollbar.css';

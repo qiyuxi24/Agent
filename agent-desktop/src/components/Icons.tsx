@@ -104,6 +104,22 @@ export function DeleteIcon({ size = 14, className }: IconProps) {
   );
 }
 
+export function MinusIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+export function MaximizeIcon({ size = 12, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="4" y="4" width="16" height="16" rx="1" />
+    </svg>
+  );
+}
+
 export function CloseIcon({ size = 20, className }: IconProps) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -406,6 +422,42 @@ export function SparklesIcon({ size = 16, className }: IconProps) {
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z" />
       <path d="M18 14l.5 2L20 16.5 18 17l-.5 2L17 17l-2-.5L17 16z" />
+    </svg>
+  );
+}
+
+/* ===== Agent / 机器人图标 ===== */
+
+/** 复制 — 克隆 */
+export function CopyIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+/** 机器人头 — 自定义 Agent */
+export function BotIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="11" width="18" height="10" rx="2" />
+      <circle cx="12" cy="16" r="2" />
+      <path d="M9 11V7a3 3 0 0 1 6 0v4" />
+      <circle cx="9" cy="13" r="1" fill="currentColor" />
+      <circle cx="15" cy="13" r="1" fill="currentColor" />
+      <path d="M12 3v2" />
+    </svg>
+  );
+}
+
+/** 大脑 — AI / 智能体 */
+export function BrainIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 4a4 4 0 0 1 3.5 6 3.5 3.5 0 0 1 .5 6.5 4 4 0 0 1-8 0 3.5 3.5 0 0 1 .5-6.5A4 4 0 0 1 12 4z" />
+      <path d="M8 12h8" />
     </svg>
   );
 }

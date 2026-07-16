@@ -387,6 +387,9 @@ pub struct RagManager {
     config: Mutex<RagConfig>,
     embedder: Mutex<Option<Box<dyn Embedder>>>,
     db: Mutex<Option<lancedb::Connection>>,
+    /// 已索引的文档 ID 集合（去重 + 统计用）
+    /// key = doc.id → source_type
+    indexed_docs: Mutex<HashMap<String, String>>,
 }
 
 impl RagManager {
@@ -395,6 +398,7 @@ impl RagManager {
             config: Mutex::new(RagConfig::default()),
             embedder: Mutex::new(None),
             db: Mutex::new(None),
+            indexed_docs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -461,6 +465,11 @@ impl RagManager {
         Ok(())
     }
 
+    /// 获取当前配置的克隆
+    pub async fn get_config(&self) -> RagConfig {
+        self.config.lock().await.clone()
+    }
+
     /// 判断是否已初始化
     pub async fn is_initialized(&self) -> bool {
         self.db.lock().await.is_some()
@@ -483,8 +492,19 @@ impl RagManager {
             .map_err(|e| format!("打开表失败: {}", e))?;
 
         let mut records = Vec::new();
+        let mut new_docs = Vec::new();
+        let mut skipped = Vec::new();
+
+        // 获取当前已索引的文档 ID 集合
+        let indexed = self.indexed_docs.lock().await;
 
         for doc in &docs {
+            // 去重：已存在的文档 ID 跳过
+            if indexed.contains_key(&doc.id) {
+                skipped.push(doc.id.clone());
+                continue;
+            }
+
             let chunks = split_text(&doc.content, config.chunk_size, config.chunk_overlap);
             let texts: Vec<String> = chunks.iter().cloned().collect();
             let vectors = embedder.embed_batch(&texts)?;
@@ -502,6 +522,13 @@ impl RagManager {
                     vector,
                 });
             }
+
+            new_docs.push(doc.id.clone());
+        }
+        drop(indexed); // 释放锁
+
+        if !skipped.is_empty() {
+            eprintln!("[RAG] 跳过已存在的文档 (id): {:?}", skipped);
         }
 
         let total = records.len();
@@ -517,7 +544,18 @@ impl RagManager {
                 .execute()
                 .await
                 .map_err(|e| format!("写入数据失败: {}", e))?;
-            eprintln!("[RAG] 已索引 {} 条块", total);
+            eprintln!("[RAG] 已索引 {} 条块 ({} 文档)", total, new_docs.len());
+        }
+
+        // 记录新索引的文档 ID
+        {
+            let mut indexed = self.indexed_docs.lock().await;
+            for doc_id in &new_docs {
+                // 从 docs 中找到对应的 source_type
+                if let Some(doc) = docs.iter().find(|d| &d.id == doc_id) {
+                    indexed.insert(doc_id.clone(), doc.source_type.clone());
+                }
+            }
         }
 
         Ok(total)
@@ -544,6 +582,12 @@ impl RagManager {
             .delete(&format!("id LIKE '{}_chunk_%'", escaped))
             .await
             .map_err(|e| format!("删除失败: {}", e))?;
+
+        // 从去重集合中移除
+        {
+            let mut indexed = self.indexed_docs.lock().await;
+            indexed.remove(doc_id);
+        }
 
         eprintln!("[RAG] 已删除文档 '{}'", doc_id);
         Ok(0) // LanceDB 0.16 delete 不返回行数
@@ -632,8 +676,10 @@ impl RagManager {
             .await
             .map_err(|e| format!("统计行数失败: {}", e))?;
 
+        let document_count = self.indexed_docs.lock().await.len();
+
         Ok(RagStats {
-            document_count: 0, // TODO: 统计去重后的文档数
+            document_count,
             chunk_count,
             config,
         })
@@ -655,7 +701,10 @@ impl RagManager {
             .await
             .map_err(|e| format!("清空表失败: {}", e))?;
 
-        eprintln!("[RAG] 已清空索引");
+        // 清空去重集合
+        self.indexed_docs.lock().await.clear();
+
+        eprintln!("[RAG] 已清空索引（含去重记录）");
         Ok(())
     }
 }
@@ -678,7 +727,7 @@ pub async fn rag_init(
 pub async fn rag_get_config(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<RagConfig, String> {
-    Ok(state.rag.config.lock().await.clone())
+    Ok(state.rag.get_config().await)
 }
 
 /// 获取索引统计
@@ -759,4 +808,110 @@ pub async fn rag_search_for_chat(
         .join("\n\n---\n\n");
 
     Ok(context)
+}
+
+// ==============================
+// 文件上传命令
+// ==============================
+
+/// 文件上传结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadFileResult {
+    /// 文档 ID
+    #[serde(rename = "documentId")]
+    pub document_id: String,
+    /// 来源文件名
+    #[serde(rename = "sourceName")]
+    pub source_name: String,
+    /// 检测到的文件类型（txt / md / pdf / docx）
+    #[serde(rename = "fileType")]
+    pub file_type: String,
+    /// 提取的文本长度（字符数）
+    #[serde(rename = "textLength")]
+    pub text_length: usize,
+    /// 索引的分块数量
+    #[serde(rename = "chunkCount")]
+    pub chunk_count: usize,
+}
+
+/// 上传文件并索引到知识库
+///
+/// 支持格式：.txt, .md, .pdf, .docx
+/// 前端先用 tauri-plugin-dialog 选择文件，再把路径传进来。
+/// 后端负责：读取文件 → 格式解析 → 文本提取 → 分块 → 嵌入 → 索引。
+#[tauri::command]
+pub async fn rag_upload_file(
+    state: tauri::State<'_, crate::AppState>,
+    file_path: String,
+) -> Result<UploadFileResult, String> {
+    let path = std::path::Path::new(&file_path);
+
+    // 1. 读取原始字节
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| format!("无法读取文件 '{}': {}", file_path, e))?;
+
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "???".to_string());
+
+    // 2. 检测格式并提取纯文本
+    let parse_result = crate::rag_parser::extract_text(&bytes, &file_path)?;
+    let text = parse_result.text;
+
+    if text.trim().is_empty() {
+        return Err(format!(
+            "文件 '{}' 中未提取到任何文本内容（可能为空或格式异常）",
+            file_name
+        ));
+    }
+
+    let file_type_str = match parse_result.file_type {
+        crate::rag_parser::FileType::Txt => "txt",
+        crate::rag_parser::FileType::Md => "md",
+        crate::rag_parser::FileType::Pdf => "pdf",
+        crate::rag_parser::FileType::Docx => "docx",
+        crate::rag_parser::FileType::Unknown => "unknown",
+    };
+
+    // 3. 创建文档记录并索引
+    let doc_id = format!("file_{}_{}", chrono_now_millis(), &file_name);
+    let doc = RagDocumentInput {
+        id: doc_id.clone(),
+        content: text.clone(),
+        source_type: format!("file_{}", file_type_str),
+        source_id: file_name.clone(),
+        metadata: {
+            let mut m = std::collections::HashMap::new();
+            m.insert("original_path".to_string(), file_path);
+            m.insert("file_type".to_string(), file_type_str.to_string());
+            m.insert("file_size".to_string(), bytes.len().to_string());
+            m
+        },
+    };
+
+    let chunk_count = state.rag.index_documents(vec![doc]).await?;
+
+    eprintln!(
+        "[RAG] 文件 '{}' 已索引 (类型={}, 大小={}B, 文本={}字符, 分块={})",
+        file_name, file_type_str, bytes.len(), text.len(), chunk_count
+    );
+
+    Ok(UploadFileResult {
+        document_id: doc_id,
+        source_name: file_name,
+        file_type: file_type_str.to_string(),
+        text_length: text.len(),
+        chunk_count,
+    })
+}
+
+/// 获取当前毫秒时间戳（用于生成唯一 ID）
+fn chrono_now_millis() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }

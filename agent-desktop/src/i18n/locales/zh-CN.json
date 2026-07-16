@@ -24,7 +24,8 @@
     "expandSidebar": "展开侧边栏",
     "browser": "浏览器",
     "ide": "IDE",
-    "workspace": "工作空间"
+    "workspace": "工作空间",
+    "agents": "智能体"
   },
 
   "chat": {
@@ -92,7 +93,10 @@
       "empty": "尚未添加模型，点击上方「添加」按钮开始配置。",
       "currentModels": "模型：",
       "addModelPlaceholder": "添加模型...",
-      "removeModel": "移除 {{model}}"
+      "removeModel": "移除 {{model}}",
+      "exhausted": "已耗尽",
+      "clearExhausted": "恢复全部",
+      "restoreModel": "恢复 {{model}}"
     },
 
     "shortcuts": {
@@ -250,7 +254,14 @@
       "cleared": "索引已清空",
       "clearConfirm": "确定要清空所有索引数据吗？此操作不可恢复。",
       "demoSuccess": "演示数据索引成功：{{count}} 个分块",
-      "refresh": "刷新"
+      "refresh": "刷新",
+      "uploadFile": "上传文件",
+      "uploadFileHint": "支持 PDF、TXT、MD、DOCX 格式，自动提取文本并索引",
+      "dragDrop": "或将文件拖拽到此处",
+      "uploading": "正在解析和索引...",
+      "uploadSuccess": "文件 '{{name}}' 索引成功（{{chunks}} 个分块）",
+      "uploadError": "文件上传失败: {{error}}",
+      "supportedFormats": "支持格式：PDF、TXT、MD、DOCX"
     }
   },
 
@@ -268,6 +279,52 @@
     "blockedTitle": "无法在此处显示",
     "blockedMessage": "该网站不允许嵌入显示，请在外部浏览器中打开。",
     "searchWith": "搜索"
+  },
+
+  "agents": {
+    "title": "自定义智能体",
+    "desc": "创建自己的 AI 智能体，自定义角色、技能和工具。每个智能体都可以有独立的身份和知识。",
+    "create": "创建智能体",
+    "edit": "编辑",
+    "delete": "删除",
+    "deleteConfirm": "确定要删除「{{name}}」吗？",
+    "empty": "还没有自定义智能体，点击上方按钮创建第一个吧。",
+    "emptyHint": "你可以为不同任务创建不同的智能体，比如编程助手、写作助手、翻译助手等。",
+    "chatWith": "开始对话",
+    "clone": "复制",
+
+    "editor": {
+      "title": "编辑智能体",
+      "createTitle": "创建新智能体",
+      "save": "保存",
+      "cancel": "取消",
+      "basic": "基本信息",
+      "name": "名称",
+      "namePlaceholder": "例如：编程助手、翻译官",
+      "description": "简介",
+      "descriptionPlaceholder": "用一句话描述这个智能体的用途...",
+      "icon": "头像",
+      "iconHint": "选择一个表情符号作为头像",
+      "systemPrompt": "系统提示词",
+      "systemPromptPlaceholder": "设定这个智能体的角色和行为...\n\n例如：\n你是一个资深的 Python 编程助手，擅长代码调试和架构设计。\n回答问题时优先提供代码示例。",
+      "systemPromptHint": "系统提示词决定了智能体的核心行为。越详细，智能体的表现越精准。",
+      "tools": "工具",
+      "enabledSkills": "启用的 Skills",
+      "skillsDesc": "选择当前对话中需要加载的 Skills。留空=使用全局默认。",
+      "enabledMcp": "启用的 MCP 工具",
+      "mcpDesc": "选择这个智能体可用的 MCP 服务器。留空=使用全部已连接的。",
+      "model": "模型",
+      "modelDesc": "选择这个智能体使用的模型。留空=使用全局默认。",
+      "modelDefault": "使用全局默认模型",
+      "knowledge": "知识库",
+      "knowledgeDesc": "选择关联的知识库。留空=不使用知识库。",
+      "knowledgeNone": "不关联知识库",
+      "advanced": "高级设置",
+      "temperature": "温度 (Temperature)",
+      "temperatureHint": "控制回答的随机性。较低值（0-0.3）更确定，较高值（0.7-1.0）更有创意。",
+      "maxTokens": "最大 Token",
+      "maxTokensHint": "单次回答的最大 Token 数。"
+    }
   },
 
   "workspace": {

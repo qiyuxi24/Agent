@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "download:code-server": "node scripts/download-code-server.mjs",
+    "download:windows-mcp": "node scripts/download-windows-mcp.mjs",
     "setup:code-server": "node scripts/download-code-server.mjs",
     "sync-branding": "node scripts/sync-branding.mjs"
   },

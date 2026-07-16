@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, Suspense, lazy } from "react";
 import { useTranslation } from "react-i18next";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Sidebar from "./components/Sidebar";
+import TitleBar from "./components/TitleBar";
 import ChatView, { type ChatViewHandle } from "./pages/ChatView";
 import { useAppStore } from "./stores/appStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
@@ -144,43 +145,46 @@ function App() {
       }
     >
       <div className="app-container">
-        <Sidebar
-          currentPage={page}
-          onNavigate={handleNavigate}
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={toggleSidebar}
-        />
-        <main className="main-content">
-          <Suspense fallback={<div className="app-loading"><p>{t("app.loading")}</p></div>}>
-            {page === "browser" ? (
-              <BrowserPanel />
-            ) : page === "ide" ? (
-              <IdePage />
-            ) : page === "workspace" ? (
-              <WorkspacePage />
-            ) : (
-              <ChatView ref={chatViewRef} conversationId={activeConversationId} />
-            )}
-          </Suspense>
-        </main>
+        <TitleBar />
+        <div className="app-body">
+          <Sidebar
+            currentPage={page}
+            onNavigate={handleNavigate}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={toggleSidebar}
+          />
+          <main className="main-content">
+            <Suspense fallback={<div className="app-loading"><p>{t("app.loading")}</p></div>}>
+              {page === "browser" ? (
+                <BrowserPanel />
+              ) : page === "ide" ? (
+                <IdePage />
+              ) : page === "workspace" ? (
+                <WorkspacePage />
+              ) : (
+                <ChatView ref={chatViewRef} conversationId={activeConversationId} />
+              )}
+            </Suspense>
+          </main>
 
-        {/* 侧边栏折叠时，左上角浮动展开按钮 */}
-        {sidebarCollapsed && (
-          <button
-            className="sidebar-expand-float"
-            onClick={toggleSidebar}
-            title={t("sidebar.expandSidebar")}
-          >
-            <PanelLeftOpenIcon size={18} />
-          </button>
-        )}
+          {/* 侧边栏折叠时，左上角浮动展开按钮 */}
+          {sidebarCollapsed && (
+            <button
+              className="sidebar-expand-float"
+              onClick={toggleSidebar}
+              title={t("sidebar.expandSidebar")}
+            >
+              <PanelLeftOpenIcon size={18} />
+            </button>
+          )}
 
-        {/* 设置页作为独立浮层覆盖在主页面之上 */}
-        {page === "settings" && (
-          <Suspense fallback={<div className="app-loading"><p>{t("app.loading")}</p></div>}>
-            <SettingsPage onClose={() => setPage("chat")} />
-          </Suspense>
-        )}
+          {/* 设置页作为独立浮层覆盖在主页面之上 */}
+          {page === "settings" && (
+            <Suspense fallback={<div className="app-loading"><p>{t("app.loading")}</p></div>}>
+              <SettingsPage onClose={() => setPage("chat")} />
+            </Suspense>
+          )}
+        </div>
       </div>
     </ErrorBoundary>
   );

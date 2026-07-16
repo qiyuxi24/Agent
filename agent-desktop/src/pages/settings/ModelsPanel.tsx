@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore, type ModelProvider } from "../../stores/appStore";
-import { EditIcon, DeleteIcon, PlusIcon } from "../../components/Icons";
+import { EditIcon, DeleteIcon, PlusIcon, ErrorIcon, RefreshIcon } from "../../components/Icons";
 
 export default function ModelsPanel() {
   const { t } = useTranslation();
@@ -11,6 +11,9 @@ export default function ModelsPanel() {
   const removeProvider = useAppStore((s) => s.removeProvider);
   const addModel = useAppStore((s) => s.addModel);
   const removeModel = useAppStore((s) => s.removeModel);
+  const quotaExhaustedModels = useAppStore((s) => s.quotaExhaustedModels);
+  const clearModelExhausted = useAppStore((s) => s.clearModelExhausted);
+  const clearAllExhausted = useAppStore((s) => s.clearAllExhausted);
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -61,6 +64,12 @@ export default function ModelsPanel() {
     <section className="settings-panel">
       <div className="section-header models-section-header">
         <div className="section-header-actions">
+          {Object.keys(quotaExhaustedModels).length > 0 && (
+            <button className="btn btn-sm btn-ghost" onClick={clearAllExhausted} title={t("settings.models.clearExhausted")}>
+              <RefreshIcon size={13} />
+              {t("settings.models.clearExhausted")}
+            </button>
+          )}
           <button className="btn btn-add-provider" onClick={() => setShowAddForm(!showAddForm)}>
             <PlusIcon size={14} />
             {t("settings.models.add")}
@@ -141,12 +150,27 @@ export default function ModelsPanel() {
                   <div className="provider-models">
                     <span className="models-label">{t("settings.models.currentModels")}</span>
                     <div className="model-tags">
-                      {p.models.map((m) => (
-                        <span key={m} className="model-tag">
-                          {m}
-                          <button className="model-tag-remove" onClick={() => removeModel(p.id, m)} title={t("settings.models.removeModel", { model: m })}>×</button>
-                        </span>
-                      ))}
+                      {p.models.map((m) => {
+                        const isExhausted = !!quotaExhaustedModels[`${p.id}::${m}`];
+                        return (
+                          <span key={m} className={`model-tag ${isExhausted ? "model-tag-exhausted" : ""}`}>
+                            {isExhausted && (
+                              <ErrorIcon size={12} className="model-exhausted-icon" />
+                            )}
+                            {m}
+                            {isExhausted && (
+                              <button
+                                className="model-tag-restore"
+                                onClick={(e) => { e.stopPropagation(); clearModelExhausted(p.id, m); }}
+                                title={t("settings.models.restoreModel", { model: m })}
+                              >
+                                <RefreshIcon size={11} />
+                              </button>
+                            )}
+                            <button className="model-tag-remove" onClick={() => removeModel(p.id, m)} title={t("settings.models.removeModel", { model: m })}>×</button>
+                          </span>
+                        );
+                      })}
                       <div className="model-add-inline">
                         <input
                           className="model-add-input"

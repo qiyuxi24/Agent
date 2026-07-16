@@ -1,6 +1,6 @@
 [package]
 name = "agent-desktop"
-version = "0.1.0"
+version = "0.3.0"
 description = "A Desktop AI Agent"
 authors = ["you"]
 edition = "2021"
@@ -39,6 +39,9 @@ fastembed = "5"
 
 # RAG — 语义分块（递归字符→词→句边界，非滑动窗口）
 text-splitter = "0.32"
+
+# RAG — PDF 文本提取（纯 Rust，零系统依赖）
+pdf-extract = "0.12"
 
 # ==============================
 # 编译优化配置

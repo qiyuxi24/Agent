@@ -7,15 +7,18 @@ mod mcp;
 mod pet;
 mod plugins;
 mod rag;
+mod rag_parser;
 mod sandbox;
 mod skills;
 mod tools;
+mod types;
 mod vscode_bridge;
+
+pub use types::*;
 
 use error_codes::McpError;
 use futures::StreamExt;
 use mcp::McpServerConfig;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::{Arc, LazyLock};
 use tauri::{AppHandle, Emitter, Manager};
@@ -36,8 +39,8 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
 /// 取消流注册 key
 const CANCEL_STREAM_KEY: &str = "chat";
 
-/// 统一 User-Agent（从 Cargo.toml 版本号手动同步：搜索 "USER_AGENT" 可找到所有位置）
-pub(crate) const USER_AGENT: &str = "votek/0.3.0";
+/// 统一 User-Agent（从 Cargo.toml 版本号自动派生，无需手动同步）
+pub(crate) const USER_AGENT: &str = concat!("votek/", env!("CARGO_PKG_VERSION"));
 
 /// 复用 reqwest Client（内建连接池），避免每次 LLM 调用重新建立 TCP 连接
 ///
@@ -58,165 +61,6 @@ pub(crate) fn build_market_client(timeout_secs: u64) -> Result<reqwest::Client, 
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ChatRequest {
-    pub api_base: String,
-    pub api_key: String,
-    pub model: String,
-    pub messages: Vec<ChatMessage>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ChatMessage {
-    pub role: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    /// DeepSeek 思考链 / Claude thinking content（用于多轮工具调用上下文保持）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_content: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-}
-
-impl ChatMessage {
-    pub fn system(content: impl Into<String>) -> Self {
-        Self { role: "system".into(), content: Some(content.into()), reasoning_content: None, tool_calls: None, tool_call_id: None }
-    }
-    pub fn user(content: impl Into<String>) -> Self {
-        Self { role: "user".into(), content: Some(content.into()), reasoning_content: None, tool_calls: None, tool_call_id: None }
-    }
-    pub fn tool(tool_call_id: String, content: impl Into<String>) -> Self {
-        Self { role: "tool".into(), content: Some(content.into()), reasoning_content: None, tool_calls: None, tool_call_id: Some(tool_call_id) }
-    }
-    pub fn assistant(content: String, reasoning: String, tool_calls: Vec<ToolCall>) -> Self {
-        Self {
-            role: "assistant".into(),
-            content: if content.is_empty() { None } else { Some(content) },
-            reasoning_content: if reasoning.is_empty() { None } else { Some(reasoning) },
-            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
-            tool_call_id: None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub arguments: String,
-}
-
-/// 流式 token（普通文本增量）
-#[derive(Debug, Clone, Serialize)]
-pub struct StreamToken {
-    pub token: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct StreamError {
-    pub error: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct StreamDone;
-
-/// LLM 调用失败重试通知：告诉前端清空之前的 token 缓冲，准备接收新一轮流式输出
-#[derive(Debug, Clone, Serialize)]
-pub struct StreamRetry {
-    pub attempt: u32,
-}
-
-/// 最终答案开始：agent 多轮循环结束、进入面向用户的正式回答阶段
-/// （区分「中间轮的推理草稿」与「终止轮的最终答案」，前端可据此收起思考面板）
-#[derive(Debug, Clone, Serialize)]
-pub struct FinalAnswerStart;
-
-/// 思考过程：开始（DeepSeek/Claude 的 reasoning_content 阶段启动）
-#[derive(Debug, Clone, Serialize)]
-pub struct ThinkingStart;
-
-/// 思考过程：增量文本片段
-#[derive(Debug, Clone, Serialize)]
-pub struct ThinkingDelta {
-    pub delta: String,
-}
-
-/// 思考过程：结束（统计信息）
-#[derive(Debug, Clone, Serialize)]
-pub struct ThinkingStop {
-    /// 估算 token 数（约 1 token ≈ 4 字符，中英文混合）
-    pub tokens: u64,
-    /// 思考耗时（毫秒）
-    pub duration_ms: u64,
-}
-
-/// 工具调用开始事件（前端可渲染「正在调用 xxx」）
-#[derive(Debug, Clone, Serialize)]
-pub struct ToolCallEvent {
-    pub name: String,
-    pub arguments: String,
-}
-
-/// 工具调用结果事件
-#[derive(Debug, Clone, Serialize)]
-pub struct ToolResultEvent {
-    pub name: String,
-    pub result: String,
-    /// 是否执行成功
-    #[serde(rename = "isError")]
-    pub is_error: bool,
-    /// 错误码（成功时为 None）
-    pub error_code: Option<String>,
-    /// 错误分类（如 TIMEOUT、TOOL_ERROR）
-    pub error_category: Option<String>,
-    /// 建议操作：retry | reconnect | none
-    pub suggested_action: Option<String>,
-}
-
-/// 把内部 ChatMessage 转为 OpenAI 接口需要的 JSON（精确控制字段，避免 null 陷阱）
-fn msg_to_value(m: &ChatMessage) -> Value {
-    let mut map = serde_json::Map::new();
-    map.insert("role".to_string(), Value::String(m.role.clone()));
-    match &m.content {
-        Some(c) => map.insert("content".to_string(), Value::String(c.clone())),
-        None => map.insert("content".to_string(), Value::Null),
-    };
-    // DeepSeek/Claude：工具调用场景需要回传 reasoning_content 以保持思考上下文
-    if let Some(rc) = &m.reasoning_content {
-        if !rc.is_empty() {
-            map.insert("reasoning_content".to_string(), Value::String(rc.clone()));
-        }
-    }
-    if let Some(tcs) = &m.tool_calls {
-        let arr: Vec<Value> = tcs
-            .iter()
-            .map(|tc| {
-                serde_json::json!({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": { "name": tc.name, "arguments": tc.arguments }
-                })
-            })
-            .collect();
-        map.insert("tool_calls".to_string(), Value::Array(arr));
-    }
-    if let Some(tid) = &m.tool_call_id {
-        map.insert("tool_call_id".to_string(), Value::String(tid.clone()));
-    }
-    Value::Object(map)
-}
-
-/// 累积流式工具调用（OpenAI 分片推送 tool_calls）
-#[derive(Default)]
-struct ToolCallAcc {
-    id: String,
-    name: String,
-    arguments: String,
 }
 
 /// 准备 agent loop 上下文：聚合所有工具（MCP + 原生） + 注入 Skills prompt + 准备 messages。
@@ -269,14 +113,52 @@ async fn chat_stream(
         streams.insert(CANCEL_STREAM_KEY.to_string(), cancel_tx);
     }
 
-    // 3. 组装 agent loop 上下文
+    // 3. 注册审批信号（human-in-the-loop）
+    let default_decision = ToolApprovalDecision::default();
+    let (approval_tx, approval_rx) = tokio::sync::watch::channel(default_decision);
+    {
+        let mut streams = state.active_approval_streams.lock().await;
+        streams.insert(CANCEL_STREAM_KEY.to_string(), approval_tx);
+    }
+
+    // 4. 组装 agent loop 上下文
     let llm = agent_loop::RealLlmClient {
         app: app.clone(),
         request: request.clone(),
     };
     let executor = agent_loop::RegistryToolExecutor { registry: &state.tools };
+
+    // 从 ChatRequest 解析 tool_use_behavior
+    let tool_use_behavior = match request.tool_use_behavior.as_str() {
+        "stop_on_first_tool" => agent_loop::ToolUseBehavior::StopOnFirstTool,
+        "stop_at_tools" if !request.stop_at_tool_names.is_empty() => {
+            agent_loop::ToolUseBehavior::StopAtTools(request.stop_at_tool_names.clone())
+        }
+        _ => agent_loop::ToolUseBehavior::RunLlmAgain,
+    };
+
     let config = agent_loop::AgentLoopConfig {
-        max_iterations: MAX_ITERATIONS,
+        max_iterations: if request.max_iterations > 0 {
+            request.max_iterations
+        } else {
+            MAX_ITERATIONS
+        },
+        context_limit: 128_000,
+        compaction_threshold: 0.80,
+        require_tool_approval_for: if request.require_tool_approval_for.is_empty() {
+            Vec::new()
+        } else {
+            request.require_tool_approval_for.clone()
+        },
+        enrichment_threshold_chars: if request.enrichment_threshold_chars > 0 {
+            request.enrichment_threshold_chars
+        } else {
+            5000
+        },
+        llm_timeout_secs: request.llm_timeout_secs,
+        tool_use_behavior,
+        // Verification Loop 默认关闭，通过 ChatRequest 或设置页启用
+        enable_verification: false,
         ..Default::default()
     };
     let ctx = agent_loop::LoopContext {
@@ -287,12 +169,105 @@ async fn chat_stream(
         llm: &llm,
         executor: &executor,
         cancel: &mut cancel_rx,
+        approval_rx: Some(approval_rx),
     };
 
-    // 4. 运行 loop + 清理
+    // 5. 运行 loop
     let result = agent_loop::run_agent_loop(ctx).await;
+
+    // 5. 把 Loop 累积的完整消息列表（含工具调用/结果）发回前端，供持久化
+    if let Ok(ref final_messages) = result {
+        let _ = app.emit("stream-messages", StreamMessages {
+            messages: final_messages.clone(),
+        });
+
+        // 6. 如果 RAG 已启用，异步索引本次对话作为知识（静默，不阻塞）
+        let rag_config = state.rag.get_config().await;
+        if rag_config.enabled && !rag_config.db_path.is_empty() {
+            let rag = state.rag.clone();
+            let rag_messages = final_messages.clone();
+            tokio::spawn(async move {
+                if let Err(e) = index_conversation_to_rag(&rag, &rag_messages).await {
+                    eprintln!("[RAG] 对话索引失败 (非阻塞): {}", e);
+                }
+            });
+        }
+    }
+
     cleanup(&app, &state).await;
-    result
+    result?;
+    Ok(())
+}
+
+/// 将对话消息索引到 RAG 知识库（静默异步，不阻塞）
+///
+/// 提取用户问题和助手回答作为 Q&A 对，格式化为一个文档写入知识库。
+/// source_type="conversation"，source_id 使用时间戳。
+async fn index_conversation_to_rag(
+    rag: &Arc<crate::rag::RagManager>,
+    messages: &[ChatMessage],
+) -> Result<(), String> {
+    // 提取用户消息和助手回答，组合为 Q&A 格式
+    let mut qa_pairs: Vec<String> = Vec::new();
+    let mut current_q = String::new();
+
+    for msg in messages {
+        match msg.role.as_str() {
+            "user" => {
+                if let Some(ref content) = msg.content {
+                    if !content.trim().is_empty() {
+                        if !current_q.is_empty() {
+                            qa_pairs.push(current_q.clone());
+                        }
+                        current_q = format!("用户：{}", content);
+                    }
+                }
+            }
+            "assistant" => {
+                if let Some(ref content) = msg.content {
+                    if !content.trim().is_empty() {
+                        let answer = if !current_q.is_empty() {
+                            format!("{}\n助手：{}", current_q, content)
+                        } else {
+                            format!("助手：{}", content)
+                        };
+                        qa_pairs.push(answer);
+                        current_q.clear();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if qa_pairs.is_empty() {
+        return Ok(()); // 没有有意义的问答对
+    }
+
+    let conversation_text = qa_pairs.join("\n\n---\n\n");
+    if conversation_text.len() < 20 {
+        return Ok(()); // 内容太少，跳过
+    }
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+
+    let doc = crate::rag::RagDocumentInput {
+        id: format!("conv_{}", ts),
+        content: conversation_text,
+        source_type: "conversation".to_string(),
+        source_id: format!("对话记录_{}", ts),
+        metadata: std::collections::HashMap::new(),
+    };
+
+    let chunk_count = rag.index_documents(vec![doc]).await?;
+    if chunk_count > 0 {
+        eprintln!("[RAG] 已自动索引当前对话为知识 ({} 分块)", chunk_count);
+    }
+
+    Ok(())
 }
 
 /// 调用一次 LLM 流式接口，实时推送思考 token（reasoning_content），并收集 content / tool_calls
@@ -341,9 +316,48 @@ pub(crate) async fn run_completion(
             McpError::llm_api_error(status.as_u16(), &format!("(无法读取响应体: {e})")).to_string()
         })?;
         let short: String = body.chars().take(300).collect();
-        return Err(McpError::llm_api_error(status.as_u16(), &short).to_string());
+
+        // 检测配额耗尽错误
+        let status_code = status.as_u16();
+        let is_quota_error = detect_quota_error(status_code, &body);
+
+        if is_quota_error {
+            let _ = app.emit("model-quota-exhausted", ModelQuotaExhausted {
+                api_base: request.api_base.clone(),
+                model: request.model.clone(),
+                error_message: short.clone(),
+            });
+            eprintln!("[LLM] 检测到模型配额耗尽: model={} status={} {}", request.model, status_code, short);
+        }
+
+        return Err(McpError::llm_api_error(status_code, &short).to_string());
     }
 
+    parse_sse_response(app, response, cancel_rx, stream_content).await
+}
+
+/// 检测 HTTP 响应是否为配额/速率限制错误
+fn detect_quota_error(status_code: u16, body: &str) -> bool {
+    let body_lower = body.to_lowercase();
+    status_code == 429
+        || status_code == 402
+        || body_lower.contains("quota")
+        || body_lower.contains("insufficient_quota")
+        || body_lower.contains("rate limit")
+        || body_lower.contains("rate_limit")
+        || body_lower.contains("exceeded")
+        || body_lower.contains("out of credits")
+        || body_lower.contains("insufficient funds")
+        || (body_lower.contains("too many") && body_lower.contains("requests"))
+}
+
+/// 解析 SSE 字节流，累积 content/thinking/tool_calls 并实时推送事件
+async fn parse_sse_response(
+    app: &AppHandle,
+    response: reqwest::Response,
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    stream_content: bool,
+) -> Result<(String, String, Vec<ToolCall>), String> {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut content = String::new();
@@ -423,14 +437,27 @@ pub(crate) async fn run_completion(
                                     });
                                 }
                                 if !token.is_empty() {
+                                    // 非 reasoning 模型的 content 首次到达时，也需要初始化思考面板
+                                    if !thinking_started && !stream_content {
+                                        thinking_started = true;
+                                        let _ = app.emit("thinking-start", ThinkingStart);
+                                    }
                                     content.push_str(token);
-                                    // 仅在 stream_content=true（chat 模式）时实时推到答案框；
-                                    // agent 模式静默累积，交由 agent loop 判定归属后回放。
                                     if stream_content {
+                                        // 聊天模式：实时推送到答案框
                                         let _ = app.emit(
                                             "stream-token",
                                             StreamToken {
                                                 token: token.to_string(),
+                                            },
+                                        );
+                                    } else {
+                                        // Agent 模式中间轮：实时推送到思考面板
+                                        // （不等 LLM 返回再回放，用户可实时看到思考过程）
+                                        let _ = app.emit(
+                                            "thinking-delta",
+                                            ThinkingDelta {
+                                                delta: token.to_string(),
                                             },
                                         );
                                     }
@@ -497,22 +524,13 @@ pub(crate) async fn run_completion(
     Ok((content, thinking, finalize_tool_calls(tool_accs)))
 }
 
-/// 从累积器中产出最终的 ToolCall 列表（忽略没有名字的无效项）
-fn finalize_tool_calls(accs: Vec<ToolCallAcc>) -> Vec<ToolCall> {
-    accs.into_iter()
-        .filter(|a| !a.name.is_empty())
-        .map(|a| ToolCall {
-            id: a.id,
-            name: a.name,
-            arguments: a.arguments,
-        })
-        .collect()
-}
-
 async fn cleanup(_app: &AppHandle, state: &tauri::State<'_, AppState>) {
     // 不再重复 emit stream-done：run_agent_loop 的每个出口都已经 emit 过
     let mut streams = state.active_streams.lock().await;
     streams.remove(CANCEL_STREAM_KEY);
+    // 清理审批流
+    let mut approval_streams = state.active_approval_streams.lock().await;
+    approval_streams.remove(CANCEL_STREAM_KEY);
     eprintln!("[chat_stream] 清理完毕，stream-done 已由 agent loop 发出");
 }
 
@@ -521,6 +539,19 @@ async fn cancel_chat(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let streams = state.active_streams.lock().await;
     if let Some(cancel) = streams.get(CANCEL_STREAM_KEY) {
         let _ = cancel.send(true);
+    }
+    Ok(())
+}
+
+/// 前端回传工具审批决策（human-in-the-loop）
+#[tauri::command]
+async fn tool_approval_response(
+    state: tauri::State<'_, AppState>,
+    decision: ToolApprovalDecision,
+) -> Result<(), String> {
+    let streams = state.active_approval_streams.lock().await;
+    if let Some(tx) = streams.get(CANCEL_STREAM_KEY) {
+        let _ = tx.send(decision);
     }
     Ok(())
 }
@@ -771,6 +802,8 @@ async fn mcp_clear_cache(
 
 pub struct AppState {
     active_streams: Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>,
+    /// 工具审批通道（human-in-the-loop）
+    active_approval_streams: Mutex<HashMap<String, tokio::sync::watch::Sender<ToolApprovalDecision>>>,
     pub tools: ToolRegistry,
     pub rag: Arc<rag::RagManager>,
     pub pet: pet::PetManager,
@@ -804,6 +837,7 @@ pub fn run() {
 
         AppState {
             active_streams: Mutex::new(HashMap::new()),
+            active_approval_streams: Mutex::new(HashMap::new()),
             tools: registry,
             rag: rag_manager,
             pet: pet::PetManager::default(),
@@ -815,6 +849,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             chat_stream,
             cancel_chat,
+            tool_approval_response,
             mcp_connect,
             mcp_disconnect,
             mcp_list_servers,
@@ -824,8 +859,8 @@ pub fn run() {
             mcp_health_check,
             mcp_reconnect,
             mcp_clear_cache,
-            mcp::mcp_check_prereq,
-            mcp::mcp_market_list,
+            mcp::market::mcp_check_prereq,
+            mcp::market::mcp_market_list,
             // RAG — 检索增强生成
             rag::rag_init,
             rag::rag_get_config,
@@ -835,6 +870,7 @@ pub fn run() {
             rag::rag_delete_document,
             rag::rag_clear_all,
             rag::rag_search_for_chat,
+            rag::rag_upload_file,
             // 浏览器模块
             browser::browser_create,
             browser::browser_navigate,

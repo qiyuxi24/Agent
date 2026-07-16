@@ -6,12 +6,12 @@ import {
   PlusIcon, ChatIcon, SettingsIcon, DotsIcon,
   PinIcon, PinFilledIcon, DeleteIcon,
   PanelLeftCloseIcon, GlobeIcon, CodeIcon,
-  WorkspaceIcon,
+  WorkspaceIcon, BotIcon,
 } from "./Icons";
 
 interface SidebarProps {
-  currentPage: "chat" | "settings" | "browser" | "ide" | "workspace";
-  onNavigate: (page: "chat" | "settings" | "browser" | "ide" | "workspace") => void;
+  currentPage: "chat" | "settings" | "browser" | "ide" | "workspace" | "agents";
+  onNavigate: (page: "chat" | "settings" | "browser" | "ide" | "workspace" | "agents") => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }
@@ -146,6 +146,13 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggleCo
           >
             <GlobeIcon size={18} />
             <span>{t("sidebar.browser")}</span>
+          </button>
+          <button
+            className={`nav-item ${currentPage === "agents" ? "active" : ""}`}
+            onClick={() => onNavigate("agents")}
+          >
+            <BotIcon size={18} />
+            <span>{t("sidebar.agents")}</span>
           </button>
           <button
             className={`nav-item ${currentPage === "settings" ? "active" : ""}`}

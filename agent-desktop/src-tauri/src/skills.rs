@@ -24,6 +24,25 @@ const SKILLS_REPO: &str = "346379/Agent";
 /// 单个技能允许的最大体积（下载上限，防止异常大文件撑爆磁盘）
 const MAX_SKILL_BYTES: u64 = 5 * 1024 * 1024;
 
+/// 验证 Skill ID 是否合法（防止路径穿越攻击）
+///
+/// 规则：只允许字母、数字、连字符、下划线、点；拒绝含 `..`、`/`、`\`、空字符串的 id。
+fn validate_skill_id(id: &str) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("Skill ID 不能为空".to_string());
+    }
+    if id.contains("..") {
+        return Err(format!("非法的 Skill ID '{}': 含路径遍历符号", id));
+    }
+    if id.contains('/') || id.contains('\\') {
+        return Err(format!("非法的 Skill ID '{}': 含路径分隔符", id));
+    }
+    if !id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.') {
+        return Err(format!("非法的 Skill ID '{}': 仅允许字母、数字、连字符(-)、下划线(_)和点(.)", id));
+    }
+    Ok(())
+}
+
 /// 单个 Skill 的描述信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillInfo {
@@ -322,6 +341,7 @@ pub fn skills_list(app: AppHandle) -> Result<Vec<SkillInfo>, String> {
 /// 启用或禁用一个 Skill（在内置或安装目录中查找）
 #[tauri::command]
 pub fn skills_toggle(app: AppHandle, id: String, enabled: bool) -> Result<(), String> {
+    validate_skill_id(&id)?;
     let dir = find_skill_dir(&app, &id)
         .ok_or_else(|| format!("Skill '{}' 未找到", id))?;
 
@@ -438,7 +458,7 @@ async fn fetch_github_skills() -> Result<Vec<SkillMarketEntry>, String> {
 
     let mut entries: Vec<SkillMarketEntry> = Vec::new();
     let client = reqwest::Client::builder()
-        .user_agent("agent-desktop/0.3.0")
+        .user_agent(concat!("votek/", env!("CARGO_PKG_VERSION")))
         .default_headers({
             let mut h = reqwest::header::HeaderMap::new();
             h.insert(reqwest::header::ACCEPT, reqwest::header::HeaderValue::from_static("application/vnd.github.v3+json"));
@@ -558,6 +578,7 @@ pub async fn skills_clawhub_install(id: String) -> Result<String, String> {
 /// 从 GitHub(raw URL) 下载并安装一个 Skill（递归下载整个目录，支持 main/master 分支回退）
 #[tauri::command]
 pub async fn skills_install(app: AppHandle, id: String, download_url: String) -> Result<(), String> {
+    validate_skill_id(&id)?;
     if download_url.is_empty() {
         return Err("该技能缺少下载地址，无法安装".into());
     }
@@ -626,7 +647,7 @@ fn parse_raw_github_url(url: &str) -> Option<(String, String, String, String)> {
 fn github_client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent("votek/0.1")
+        .user_agent(concat!("votek/", env!("CARGO_PKG_VERSION")))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 }
@@ -743,6 +764,7 @@ async fn fetch_github_contents(
 /// 删除本地 Skill（仅允许删除用户安装的技能）
 #[tauri::command]
 pub fn skills_delete(app: AppHandle, id: String) -> Result<(), String> {
+    validate_skill_id(&id)?;
     let dir = installed_skills_dir(&app).join(&id);
     if !dir.exists() {
         return Err(format!("Skill '{}' 未找到（仅用户安装的技能可删除）", id));
@@ -761,6 +783,7 @@ pub fn skills_preview_prompt(app: AppHandle) -> Result<String, String> {
 /// 打开 SKILL.md 文件（返回内容供前端预览）
 #[tauri::command]
 pub fn skills_read_content(app: AppHandle, id: String) -> Result<String, String> {
+    validate_skill_id(&id)?;
     let dir = find_skill_dir(&app, &id)
         .ok_or_else(|| format!("Skill '{}' 的 SKILL.md 不存在", id))?;
     let path = dir.join("SKILL.md");

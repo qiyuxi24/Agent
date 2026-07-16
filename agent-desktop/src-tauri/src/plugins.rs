@@ -792,7 +792,7 @@ fn builtin_plugin_market() -> Vec<PluginMarketEntry> {
         PluginMarketEntry {
             id: "sql-database-explorer".into(),
             name: "SQL Database Explorer".into(),
-            version: "0.3.0".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
             author: "Agent Team".into(),
             description: "Browse, query, and visualize SQL databases. Supports SQLite, PostgreSQL, MySQL.".into(),
             description_zh: "浏览、查询和可视化 SQL 数据库。支持 SQLite、PostgreSQL、MySQL。".into(),

@@ -7,7 +7,7 @@ import { parseSSEStream } from "../lib/sse";
 import MessageContent from "../components/chat/MessageContent";
 import type { ThinkingStats } from "../components/chat/ThinkingBlock";
 import type { ToolStep } from "../components/chat/ToolStepsBlock";
-import { ModelIcon, ChevronDownIcon, CheckIcon, ArrowDownIcon, EmptyChatIcon } from "../components/Icons";
+import { ModelIcon, ChevronDownIcon, CheckIcon, ArrowDownIcon, EmptyChatIcon, XIcon } from "../components/Icons";
 import ChatInput from "../components/chat/ChatInput";
 import type { ChatInputHandle } from "../components/chat/ChatInput";
 
@@ -73,13 +73,23 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
 
   // Actions（稳定引用）
   const addMessage = useAppStore((s) => s.addMessage);
+  const replaceMessages = useAppStore((s) => s.replaceMessages);
   const updateLastAssistantMessage = useAppStore((s) => s.updateLastAssistantMessage);
   const updateLastAssistantThinking = useAppStore((s) => s.updateLastAssistantThinking);
   const updateLastAssistantToolSteps = useAppStore((s) => s.updateLastAssistantToolSteps);
   const setActiveProvider = useAppStore((s) => s.setActiveProvider);
   const setActiveModel = useAppStore((s) => s.setActiveModel);
+  const markModelExhausted = useAppStore((s) => s.markModelExhausted);
 
   const activeProvider = providers.find((p) => p.id === activeProviderId);
+
+  // Agent 集成
+  const activeAgentId = useAppStore((s) => s.activeAgentId);
+  const agentConfigs = useAppStore((s) => s.agentConfigs);
+  const setActiveAgent = useAppStore((s) => s.setActiveAgent);
+  const activeAgent = activeAgentId
+    ? agentConfigs.find((a) => a.id === activeAgentId)
+    : null;
 
   // 关闭下拉菜单（点击外部）
   useEffect(() => {
@@ -157,139 +167,278 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
     setShowScrollToBottom(false);
   };
 
-  // === Tauri 模式 ===
+  // === Tauri 模式（支持自动模型切换重试） ===
   const handleSendViaTauri = async (userMsg: Message) => {
     const { invoke } = await import("@tauri-apps/api/core");
     const { listen } = await import("@tauri-apps/api/event");
 
-    let fullContent = "";
-    setToolSteps([]);
-    toolStepsRef.current = [];
-    setThinkingContent("");
-    thinkingContentRef.current = "";
-    setThinkingStats(undefined);
-    setIsThinking(false);
+    // 跨 provider 跨模型的最大重试次数 = 所有可用模型数
+    const totalModels = useAppStore.getState().providers.reduce(
+      (sum, p) => sum + p.models.length, 0
+    );
+    const maxAttempts = Math.max(totalModels, 5); // 至少 5 次
 
-    // 思考事件监听
-    const unlistenThinkStart = await listen("thinking-start", () => {
-      if (cancelledRef.current) return;
-      setIsThinking(true);
+    // 内部重试：发起一次流式对话，返回 true 表示需要重试（模型已耗尽）
+    const doAttempt = async (): Promise<boolean> => {
+      const store = useAppStore.getState();
+      const provider = store.providers.find((p) => p.id === store.activeProviderId);
+      if (!provider) return false;
+
+      let fullContent = "";
+      let retryNeeded = false;
+      let exhaustedModelName = "";
+      let nextModel = "";
+
+      // 重置单次尝试的状态
+      setToolSteps([]);
+      toolStepsRef.current = [];
       setThinkingContent("");
       thinkingContentRef.current = "";
       setThinkingStats(undefined);
-    });
-
-    const unlistenThinkDelta = await listen<{ delta: string }>("thinking-delta", (event) => {
-      if (cancelledRef.current) return;
-      thinkingContentRef.current += event.payload.delta;
-      const full = thinkingContentRef.current;
-      setThinkingContent(full);
-      // 传递完整累积内容，而非单个 delta（避免 store 覆盖问题）
-      updateLastAssistantThinking(conversationId!, full);
-    });
-
-    const unlistenThinkStop = await listen<{ tokens: number; duration_ms: number }>("thinking-stop", (event) => {
-      // 思考结束时立即标记，让 ThinkingBlock 切换到 "done" 状态
-      // （此时可能进入 tool-call 阶段或直接输出最终答案）
       setIsThinking(false);
-      setThinkingStats({
-        tokens: event.payload.tokens,
-        durationMs: event.payload.duration_ms,
-      });
-    });
 
-    const unlistenTc = await listen<{ name: string; arguments: string }>(
-      "tool-call",
-      (event) => {
+      // 监听模型配额耗尽事件
+      const unlistenQuota = await listen<{ api_base: string; model: string; error_message: string }>(
+        "model-quota-exhausted",
+        (event) => {
+          if (cancelledRef.current) return;
+
+          // 在 store 中找到匹配的 provider（通过 api_base 匹配）
+          const currentStore = useAppStore.getState();
+          const matchedProvider = currentStore.providers.find(
+            (p) => p.apiBase === event.payload.api_base
+          );
+          if (matchedProvider) {
+            const pid = matchedProvider.id;
+            exhaustedModelName = event.payload.model;
+
+            // 标记模型为已耗尽
+            markModelExhausted(pid, exhaustedModelName, event.payload.error_message);
+
+            // 查找下一个可用模型
+            const next = currentStore.findNextAvailableModel();
+            if (next) {
+              retryNeeded = true;
+              nextModel = next.model;
+              // 立即切换激活的 provider/model，让本次 invoke 继续走完
+              setActiveProvider(next.providerId);
+              setActiveModel(next.providerId, next.model);
+            }
+          }
+        },
+      );
+
+      // 思考事件监听
+      const unlistenThinkStart = await listen("thinking-start", () => {
         if (cancelledRef.current) return;
-        const next = [
-          ...toolStepsRef.current,
-          { name: event.payload.name, args: event.payload.arguments, status: "running" as const },
-        ];
+        setIsThinking(true);
+        setThinkingContent("");
+        thinkingContentRef.current = "";
+        setThinkingStats(undefined);
+      });
+
+      const unlistenThinkDelta = await listen<{ delta: string }>("thinking-delta", (event) => {
+        if (cancelledRef.current) return;
+        thinkingContentRef.current += event.payload.delta;
+        const full = thinkingContentRef.current;
+        setThinkingContent(full);
+        updateLastAssistantThinking(conversationId!, full);
+      });
+
+      const unlistenThinkStop = await listen<{ tokens: number; duration_ms: number }>("thinking-stop", (event) => {
+        setIsThinking(false);
+        setThinkingStats({
+          tokens: event.payload.tokens,
+          durationMs: event.payload.duration_ms,
+        });
+      });
+
+      const unlistenTc = await listen<{ name: string; arguments: string }>(
+        "tool-call",
+        (event) => {
+          if (cancelledRef.current) return;
+          const next = [
+            ...toolStepsRef.current,
+            { name: event.payload.name, args: event.payload.arguments, status: "running" as const },
+          ];
+          toolStepsRef.current = next;
+          setToolSteps(next);
+        },
+      );
+
+      const unlistenTr = await listen<{
+        name: string;
+        result: string;
+        isError: boolean;
+        error_code?: string | null;
+        error_category?: string | null;
+      }>("tool-result", (event) => {
+        if (cancelledRef.current) return;
+        const { name, result, isError, error_code, error_category } = event.payload;
+        const next = toolStepsRef.current.map((s) =>
+          s.name === name && s.status === "running"
+            ? {
+                ...s,
+                status: (isError ? "error" : "done") as ToolStep["status"],
+                result,
+                errorCode: error_code || null,
+                errorCategory: error_category || null,
+              }
+            : s,
+        );
         toolStepsRef.current = next;
         setToolSteps(next);
-      },
-    );
+      });
 
-    const unlistenTr = await listen<{
-      name: string;
-      result: string;
-      isError: boolean;
-      error_code?: string | null;
-      error_category?: string | null;
-    }>("tool-result", (event) => {
-      if (cancelledRef.current) return;
-      const { name, result, isError, error_code, error_category } = event.payload;
-      const next = toolStepsRef.current.map((s) =>
-        s.name === name && s.status === "running"
-          ? {
-              ...s,
-              status: (isError ? "error" : "done") as ToolStep["status"],
-              result,
-              errorCode: error_code || null,
-              errorCategory: error_category || null,
-            }
-          : s,
+      const unlisten1 = await listen<{ token: string }>("stream-token", (event) => {
+        if (cancelledRef.current) return;
+        fullContent += event.payload.token;
+        updateLastAssistantMessage(conversationId!, fullContent);
+      });
+
+      const unlisten2 = await listen<{ error: string }>("stream-error", (event) => {
+        if (cancelledRef.current) return;
+        updateLastAssistantMessage(conversationId!, `❌ ${event.payload.error}`);
+        setIsLoading(false);
+      });
+
+      const unlistenFinal = await listen("final-answer-start", () => {
+        if (cancelledRef.current) return;
+        setIsThinking(false);
+      });
+
+      const unlisten3 = await listen("stream-done", () => {
+        const finalThinking = thinkingContentRef.current || thinkingContent;
+        if (finalThinking && conversationId) {
+          updateLastAssistantThinking(conversationId, finalThinking, thinkingStats);
+        }
+        const finalSteps = toolStepsRef.current.filter((s) => s.status !== "running");
+        if (finalSteps.length > 0 && conversationId) {
+          updateLastAssistantToolSteps(conversationId, finalSteps);
+        }
+        setIsThinking(false);
+        setIsLoading(false);
+      });
+
+      type RustChatMessage = {
+        role: string;
+        content: string | null;
+        reasoning_content?: string;
+        tool_calls?: Array<{ id: string; name: string; arguments: string }>;
+        tool_call_id?: string;
+      };
+      const unlistenMessages = await listen<{ messages: RustChatMessage[] }>("stream-messages", (event) => {
+        if (!conversationId) return;
+        const msgs: Message[] = event.payload.messages
+          .filter((m) => m.role !== "system")
+          .map((m) => ({
+            id: crypto.randomUUID(),
+            role: m.role as Message["role"],
+            content: m.content ?? "",
+            timestamp: new Date().toISOString(),
+            tool_calls: m.tool_calls,
+            tool_call_id: m.tool_call_id,
+            thinking: m.reasoning_content,
+          }));
+        replaceMessages(conversationId, msgs);
+      });
+
+      // Agent 集成：注入系统提示词 + 切换模型
+      let agentMessages = [...currentMessages, userMsg];
+      if (activeAgent) {
+        // 确保 system prompt 在第一条
+        if (activeAgent.systemPrompt) {
+          const hasSystemMsg = agentMessages.some((m) => m.role === "system");
+          if (!hasSystemMsg) {
+            agentMessages = [
+              {
+                id: "agent-system",
+                role: "system" as const,
+                content: activeAgent.systemPrompt,
+                timestamp: new Date().toISOString(),
+              },
+              ...agentMessages,
+            ];
+          }
+        }
+        // 如果有指定的 provider/model，尝试切换
+        if (activeAgent.providerId && activeAgent.model) {
+          setActiveProvider(activeAgent.providerId);
+          setActiveModel(activeAgent.providerId, activeAgent.model);
+        } else if (activeAgent.providerId) {
+          setActiveProvider(activeAgent.providerId);
+        }
+      }
+
+      // 获取当前 provider（在 agent 切换之后，确保拿到正确的）
+      const currentProvider = useAppStore.getState().providers.find(
+        (p) => p.id === useAppStore.getState().activeProviderId
       );
-      toolStepsRef.current = next;
-      setToolSteps(next);
-    });
 
-    const unlisten1 = await listen<{ token: string }>("stream-token", (event) => {
-      if (cancelledRef.current) return;
-      fullContent += event.payload.token;
-      updateLastAssistantMessage(conversationId!, fullContent);
-    });
+      await invoke("chat_stream", {
+        request: {
+          api_base: currentProvider?.apiBase || provider.apiBase,
+          api_key: currentProvider?.apiKey || provider.apiKey,
+          model: currentProvider?.activeModel || provider.activeModel,
+          messages: agentMessages.map((m) => {
+            const msg: Record<string, unknown> = {
+              role: m.role,
+            };
+            if (m.role === "tool" || !m.content) {
+              msg.content = null;
+            } else {
+              msg.content = m.content;
+            }
+            if (m.tool_calls && m.tool_calls.length > 0) {
+              msg.tool_calls = m.tool_calls;
+            }
+            if (m.tool_call_id) {
+              msg.tool_call_id = m.tool_call_id;
+            }
+            if (m.thinking) {
+              msg.reasoning_content = m.thinking;
+            }
+            return msg;
+          }),
+        },
+      });
 
-    const unlisten2 = await listen<{ error: string }>("stream-error", (event) => {
-      if (cancelledRef.current) return;
-      updateLastAssistantMessage(conversationId!, `❌ ${event.payload.error}`);
-      setIsLoading(false);
-    });
+      // 清理事件监听
+      unlistenQuota();
+      unlisten1();
+      unlisten2();
+      unlisten3();
+      unlistenFinal();
+      unlistenTc();
+      unlistenTr();
+      unlistenThinkStart();
+      unlistenThinkDelta();
+      unlistenThinkStop();
+      unlistenMessages();
 
-    // agent 多轮结束、进入面向用户的最终答案阶段
-    const unlistenFinal = await listen("final-answer-start", () => {
-      if (cancelledRef.current) return;
-      // thinking-stop 已处理 isThinking=false，这里确保工具步骤区收起
-      setIsThinking(false);
-    });
-
-    const unlisten3 = await listen("stream-done", () => {
-      const finalThinking = thinkingContentRef.current || thinkingContent;
-      if (finalThinking && conversationId) {
-        // 写入最终 thinking 内容到 message（含 stats）
-        updateLastAssistantThinking(conversationId, finalThinking, thinkingStats);
+      // 如果本轮检测到模型耗尽且找到了备用模型，更新提示信息并返回 true 触发重试
+      if (retryNeeded && nextModel) {
+        updateLastAssistantMessage(
+          conversationId!,
+          `⚠️ 模型「${exhaustedModelName || provider.activeModel}」配额不足或无权限，已自动切换到「${nextModel}」`,
+        );
+        return true;
       }
-      // 持久化工具调用步骤（过滤掉 running 状态，只保留 done/error）
-      const finalSteps = toolStepsRef.current.filter((s) => s.status !== "running");
-      if (finalSteps.length > 0 && conversationId) {
-        updateLastAssistantToolSteps(conversationId, finalSteps);
+      return false;
+    };
+
+    // 重试循环：最多尝试 maxAttempts 次，每次失败自动切换到下一个可用模型
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // 用户取消时立即停止重试
+      if (cancelledRef.current) break;
+
+      if (attempt > 0) {
+        // 从第二次尝试开始，先重置 assistant 消息内容
+        updateLastAssistantMessage(conversationId!, "");
       }
-      setIsThinking(false);
-      setIsLoading(false);
-    });
-
-    await invoke("chat_stream", {
-      request: {
-        api_base: activeProvider?.apiBase || "https://api.openai.com/v1",
-        api_key: activeProvider?.apiKey || "",
-        model: activeProvider?.activeModel || "gpt-4o",
-        messages: [...currentMessages, userMsg].map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
-      },
-    });
-
-    unlisten1();
-    unlisten2();
-    unlisten3();
-    unlistenFinal();
-    unlistenTc();
-    unlistenTr();
-    unlistenThinkStart();
-    unlistenThinkDelta();
-    unlistenThinkStop();
+      const shouldRetry = await doAttempt();
+      if (!shouldRetry) break;
+    }
   };
 
   // === 浏览器模式 ===
@@ -506,6 +655,22 @@ const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatView({ c
         </div>
 
       </div>
+
+      {/* Agent 指示栏 */}
+      {activeAgent && (
+        <div className="chat-agent-bar">
+          <span className="chat-agent-bar-icon">{activeAgent.icon}</span>
+          <span className="chat-agent-bar-name">{activeAgent.name}</span>
+          <span className="chat-agent-bar-desc">{activeAgent.description}</span>
+          <button
+            className="chat-agent-bar-clear"
+            onClick={() => setActiveAgent(null)}
+            title="清除 Agent 绑定"
+          >
+            <XIcon size={14} />
+          </button>
+        </div>
+      )}
 
       {/* 消息区域 */}
       {currentMessages.length === 0 ? (

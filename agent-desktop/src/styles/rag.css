@@ -326,6 +326,51 @@
   accent-color: var(--accent);
 }
 
+/* ---- 拖拽上传区 ---- */
+.rag-dropzone {
+  margin-top: 12px;
+  padding: 24px 16px;
+  border: 2px dashed var(--border-color);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+  cursor: pointer;
+}
+
+.rag-dropzone:hover {
+  border-color: var(--accent);
+  color: var(--text-secondary);
+}
+
+.rag-dropzone.rag-dropzone-active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.rag-dropzone p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.rag-dropzone-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.rag-dropzone svg {
+  opacity: 0.5;
+}
+
+.rag-dropzone.rag-dropzone-active svg {
+  opacity: 0.8;
+}
+
 /* ---- Header actions ---- */
 .rag-header-actions {
   display: flex;

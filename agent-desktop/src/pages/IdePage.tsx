@@ -210,10 +210,8 @@ export default function IdePage() {
             <br />
             这是一个完整的 VS Code，拥有全部插件生态和智能代码能力。
           </p>
-          {status && (
-            <p className="cs-note">
-              端口: {status.port} &nbsp;|&nbsp; 工作区: {status.workspace || "默认"}
-            </p>
+          {status?.workspace && (
+            <p className="cs-note">工作区: {status.workspace}</p>
           )}
           <div className="cs-btn-row">
             <button className="cs-btn cs-btn-primary" onClick={handleOpen}>

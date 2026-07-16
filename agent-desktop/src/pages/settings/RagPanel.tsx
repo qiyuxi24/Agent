@@ -47,6 +47,17 @@ interface RagDocument {
   source_id: string;
 }
 
+interface UploadFileResult {
+  document_id: string;
+  source_name: string;
+  file_type: string;
+  text_length: number;
+  chunk_count: number;
+}
+
+// ========== 文件上传拖拽状态 ==========
+const DRAG_ACTIVE_CLASS = "rag-dropzone-active";
+
 // ========== 嵌入模型选项（静态，不翻译）==========
 const MODEL_OPTIONS = [
   { value: "BAAI/bge-small-zh-v1.5",              label: "BGE Small 中文 (512维, 47MB, 推荐)" },
@@ -77,6 +88,10 @@ export default function RagPanel() {
   const [docSourceName, setDocSourceName] = useState("");
   const [documents, setDocuments] = useState<{ id: string; source_id: string; source_type: string; preview: string }[]>([]);
   const [showDocList, setShowDocList] = useState(false);
+
+  // 文件上传
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   // 检索测试
   const [searchQuery, setSearchQuery] = useState("");
@@ -181,6 +196,101 @@ export default function RagPanel() {
     } finally {
       setBusy(false);
     }
+  };
+
+  // ===== 上传文件 =====
+  const uploadFile = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        multiple: true,
+        filters: [
+          {
+            name: "Documents",
+            extensions: ["txt", "md", "pdf", "docx"],
+          },
+        ],
+      });
+      if (!selected) return; // 用户取消
+
+      const files = Array.isArray(selected) ? selected : [selected];
+      setUploading(true);
+      setError("");
+      const { invoke } = await import("@tauri-apps/api/core");
+
+      for (const filePath of files) {
+        try {
+          const result = await invoke<UploadFileResult>("rag_upload_file", {
+            filePath,
+          });
+          setDocuments((prev) => [
+            {
+              id: result.document_id,
+              source_id: result.source_name,
+              source_type: `file_${result.file_type}`,
+              preview: `[${result.file_type.toUpperCase()}] ${result.source_name} (${result.chunk_count} ${t("settings.rag.chunks")})`,
+            },
+            ...prev,
+          ]);
+          setShowDocList(true);
+          setError(t("settings.rag.uploadSuccess", {
+            name: result.source_name,
+            chunks: result.chunk_count,
+          }));
+        } catch (e: unknown) {
+          const msg = typeof e === "string" ? e : (e as Error)?.message || String(e);
+          setError(t("settings.rag.uploadError", { error: msg }));
+        }
+      }
+      await refreshStats();
+    } catch (e: unknown) {
+      setError(t("settings.rag.uploadError", {
+        error: typeof e === "string" ? e : (e as Error)?.message || String(e),
+      }));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ===== 拖拽上传 =====
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length === 0) return;
+
+    // 过滤支持的文件类型
+    const supported = droppedFiles.filter((f) => {
+      const name = f.name.toLowerCase();
+      return name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".pdf") || name.endsWith(".docx");
+    });
+
+    if (supported.length === 0) {
+      setError(t("settings.rag.uploadError", {
+        error: t("settings.rag.supportedFormats"),
+      }));
+      return;
+    }
+
+    setUploading(false);
+
+    // 浏览器 File 对象无法直接传给 Rust（没有文件路径），
+    // 调用 uploadFile 打开原生对话框作为替代
+    uploadFile();
   };
 
   // ===== 删除文档 =====
@@ -288,7 +398,8 @@ export default function RagPanel() {
   const isSuccessMsg = error.includes(t("settings.rag.indexSuccess", { count: "" }).split(":")[0])
     || error.includes(t("settings.rag.deleted", { name: "" }).split(":")[0])
     || error.includes(t("settings.rag.demoSuccess", { count: "" }).split(":")[0])
-    || error.includes(t("settings.rag.cleared"));
+    || error.includes(t("settings.rag.cleared"))
+    || (error.startsWith(t("settings.rag.uploadSuccess", { name: "", chunks: "" }).split("'")[0]) && !error.includes(t("settings.rag.uploadError", { error: "" }).split(":")[0]));
 
   return (
     <section className="settings-panel rag-panel">
@@ -421,6 +532,35 @@ export default function RagPanel() {
                 <PlusIcon size={14} />
                 {t("settings.rag.indexDoc")}
               </button>
+            </div>
+          </div>
+
+          {/* 上传文件 */}
+          <div className="rag-section">
+            <div className="section-header">
+              <h3>
+                <FileTextIcon size={16} />
+                {t("settings.rag.uploadFile")}
+              </h3>
+              <button
+                className="btn btn-sm btn-outline"
+                onClick={uploadFile}
+                disabled={uploading}
+              >
+                <UploadIcon size={12} />
+                {uploading ? t("settings.rag.uploading") : t("settings.rag.uploadFile")}
+              </button>
+            </div>
+            <p className="panel-desc">{t("settings.rag.uploadFileHint")}</p>
+            <div
+              className={`rag-dropzone ${dragOver ? DRAG_ACTIVE_CLASS : ""}`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <FileTextIcon size={24} />
+              <p>{t("settings.rag.dragDrop")}</p>
+              <span className="rag-dropzone-hint">{t("settings.rag.supportedFormats")}</span>
             </div>
           </div>
 

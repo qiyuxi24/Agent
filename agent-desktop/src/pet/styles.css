@@ -32,7 +32,7 @@ body {
 
 .pet-bubble {
   position: absolute;
-  top: 2px;
+  top: 24px;
   left: 50%;
   transform: translateX(-50%);
   background: rgba(255, 255, 255, 0.94);
@@ -70,4 +70,51 @@ body {
   padding: 2px 8px;
   border-radius: 10px;
   pointer-events: none;
+}
+
+/* ===== 宠物窗口控制按钮 ===== */
+.pet-controls {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  gap: 2px;
+  z-index: 10;
+  pointer-events: none; /* 容器不拦截点击 */
+}
+
+.pet-btn {
+  pointer-events: auto; /* 按钮本身可点击 */
+  -webkit-app-region: no-drag;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+  transition: background 0.12s;
+  opacity: 0.5;
+}
+
+.pet-controls:hover .pet-btn {
+  opacity: 0.9;
+}
+
+.pet-btn:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.pet-btn-close:hover {
+  background: #e81123;
+  color: white;
+}
+
+.pet-btn-pin:hover {
+  background: rgba(255, 200, 0, 0.3);
 }

@@ -115,8 +115,31 @@ fn main() {
             check_native_modules_dynamic(&release_dir, &modules);
         }
     }
+    // ---- Windows MCP 就绪检查（可选） ----
+    check_windows_mcp(manifest_dir);
 
     tauri_build::build();
+}
+
+/// 检测 Windows MCP Server 二进制是否存在（仅 Windows）
+fn check_windows_mcp(manifest_dir: &Path) {
+    let exe_path = manifest_dir
+        .join("binaries")
+        .join("windows-mcp")
+        .join("windows-mcp-server.exe");
+
+    if !exe_path.exists() {
+        println!("cargo:warning=┌─────────────────────────────────────────────");
+        println!("cargo:warning=│ Windows MCP Server NOT FOUND (optional)");
+        println!("cargo:warning=│");
+        println!("cargo:warning=│ Windows native automation tools will be unavailable.");
+        println!("cargo:warning=│ This does not affect other features.");
+        println!("cargo:warning=│");
+        println!("cargo:warning=│ To install: npm run download:windows-mcp");
+        println!("cargo:warning=└─────────────────────────────────────────────");
+    } else {
+        println!("cargo:warning=✅ Windows MCP Server binary found (sbroenne/mcp-windows)");
+    }
 }
 
 /// 检测 @vscode/* 原生 .node 模块（动态清单，与 build.config.json 对齐）

@@ -98,7 +98,7 @@ function PartRenderer({
 // ========== 主组件 ==========
 
 interface MessageContentProps {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   /** 已持久化的思考内容 */
   storedThinking?: string;

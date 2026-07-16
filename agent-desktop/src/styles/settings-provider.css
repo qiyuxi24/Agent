@@ -159,6 +159,52 @@
 }
 .model-tag-remove:hover { opacity: 1; }
 
+/* 模型配额耗尽标记 */
+.model-tag-exhausted {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+.model-exhausted-icon {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.model-tag-restore {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.model-tag-restore:hover { opacity: 1; }
+
+/* 轻量按钮（ settings 面板中使用） */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.btn-ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .model-add-inline {
   display: flex;
   align-items: center;

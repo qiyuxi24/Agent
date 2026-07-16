@@ -83,6 +83,34 @@
 
 ## 近期 TODO（P0）
 
+### Agent Loop 增强（2026-07-16 后端新增）
+
+> 后端已完成以下增强，以下为前端消费任务：
+
+#### 后端新增 ✅
+- [x] **请求参数透传**：`ChatRequest` 新增 `tool_use_behavior` / `stop_at_tool_names` / `require_tool_approval_for` / `max_iterations` / `enrichment_threshold_chars` / `llm_timeout_secs`，从 Agent 配置透传到 `AgentLoopConfig`
+- [x] **单次 LLM 超时保护**：`AgentLoopConfig.llm_timeout_secs`（0=使用底层 120s 读取超时），通过 `tokio::time::timeout` 包装
+- [x] **L2 验证循环**：`verify_output()` — LLM-as-Judge 质量验证（Maker/Checker 分离原则），`AgentLoopConfig.enable_verification` 控制
+- [x] **结构化轮次跟踪**：`agent-iteration` 事件（`AgentIterationEvent`：iteration/total/phase/elapsed_ms），`agent-loop-stats` 事件（`AgentLoopStats`：总轮次/耗时/工具调用数/压缩次数/是否验证）
+- [x] 新增 3 个事件类型：`AgentIterationEvent`、`AgentLoopStats`、`agent-iteration-tick`（向后兼容旧格式）
+
+#### 前端待消费
+- [ ] **实时思考流式（ThinkingPanel）**：验证 `thinking-delta` 在非 reasoning 模型上的表现。后端现在将 agent 模式中间轮的 content 实时推为 `thinking-delta`，ThinkingPanel 应能正常增量显示（无需 thinking-start 重复触发）。如果面板闪烁/空白，需检查 `ThinkingPanel.tsx` 是否对无 thinking-start 的 thinking-delta 有兜底处理。
+- [ ] **上下文压缩通知**：监听 `context-compacted` 事件，在聊天区域底部或通知栏显示一条轻提示（如"上下文已优化，节省 X tokens"），2-3s 自动消失。参考 `StreamNotify` 组件用法。
+- [ ] **Token 用量面板**：监听 `token-usage` 事件，在聊天输入框附近或 footer 栏显示当前轮次的 input/output/total token 数。可选：仅 agent 模式显示；hover 展开详情。
+- [ ] **工具审批弹窗（HITL）**：
+  1. 监听 `tool-approval-required` 事件 → 弹出模态确认框，显示工具名、参数 JSON（格式化），以及"批准"/"拒绝"按钮 + 可选反馈输入框
+  2. 用户点击后调 `tool_approval_response` Tauri command 写入审批决策
+  3. 后端侧默认无需审批任何工具，通过设置页 `require_tool_approval_for` 数组配置敏感工具名（如 `native_write_file`、`native_terminal_exec`）
+- [ ] **审批设置 UI**：在设置页 Agent 配置区域新增"敏感工具审批"输入框（逗号分隔工具名），调用后端 config 同步。当前后端 `require_tool_approval_for` 默认为空数组。
+- [ ] **Agent Loop 统计展示**：监听 `agent-loop-stats` 事件，在最终答案末尾显示一个轻量总结（轮次/耗时/工具调用数）
+- [ ] **轮次进度指示**：监听 `agent-iteration` 事件，在思考面板或输入框上方显示当前轮次进度（如"第 3/10 轮·思考中"）
+
+#### 后续后端增强（低优先级）
+- [ ] Verification Loop 通过 `ChatRequest` 控制而非硬编码 `false`
+- [ ] `agent-iteration` 前端进度条对接
+- [ ] L2 验证结果前端展示（"回答已通过质量验证" 标记）
+
 ### 子进程管理 — Layer 3（后续）
 
 > Windows 子进程窗口闪现问题分三层解决：
@@ -206,10 +234,19 @@ Agent 集群管理器
   - [ ] 系统原生目录选择对话框（tauri dialog 插件）
 
 ### Windows 自动化（V0.4）
-- [ ] UI Automation 树读取（Windows UIA API）
-- [ ] 窗口/控件定位 + 点击/输入
-- [ ] 屏幕截图 + OCR
-- [ ] 宏录制/回放
+> 集成方案：sbroenne/mcp-windows (v1.3.16) — 语义 UI 自动化 MCP Server，Standalone .exe 零依赖
+> 17 个工具：ui_find/ui_click/ui_type/ui_read/screenshot/mouse/keyboard/window_management/app/file_save
+> 特点：按名称定位控件（非坐标），内置 OCR 回退，LLM token 优化 60%
+>
+> 架构：作为内置 MCP Server（stdio + JSON-RPC），与 web/tavily 同层，通过 ToolRegistry 暴露给 Agent
+- [x] 下载脚本 + 构建集成（scripts/download-windows-mcp.mjs, build.config.json, build.rs）
+- [x] 前端种子（appStore.ts DEFAULT_WINDOWS_MCP_SERVER）
+- [x] 打包资源（tauri.conf.json binaries/windows-mcp/*.exe）
+- [x] 解耦设计：二进制可选、平台无感、连接失败不影响应用运行
+- [ ] UI Automation 树读取（Windows UIA API） → sbroenne ui_find/ui_read
+- [ ] 窗口/控件定位 + 点击/输入 → sbroenne ui_click/ui_type + mouse/keyboard 后备
+- [ ] 屏幕截图 + OCR → sbroenne screenshot + Windows.Media.Ocr 回退
+- [ ] 宏录制/回放 → 待自行封装
 
 ---
 

@@ -44,6 +44,11 @@ impl From<std::io::Error> for SandboxError {
     }
 }
 
+/// Windows `canonicalize()` 返回 `\\?\` 前缀，strip 掉以便与普通路径比较
+fn strip_windows_unc(path: &str) -> String {
+    path.trim_start_matches(r"\\?\").to_string()
+}
+
 // ── 数据结构 ──
 
 /// 单个沙箱实例
@@ -162,8 +167,9 @@ impl SandboxManager {
                         std::env::current_dir().unwrap_or_default().join(&joined)
                     };
                     // 简单检查：拼接后的路径是否以 root 开头
-                    let root_str = root_canon.display().to_string();
-                    let abs_str = abs.display().to_string();
+                    // Windows 上 canonicalize 返回 \\?\ 前缀，abs 没有，需统一
+                    let root_str = strip_windows_unc(&root_canon.display().to_string());
+                    let abs_str = strip_windows_unc(&abs.display().to_string());
                     if !abs_str.starts_with(&root_str) {
                         return Err(SandboxError::PathEscape {
                             requested: relative.to_string(),
@@ -176,7 +182,9 @@ impl SandboxManager {
         };
 
         let root_canon = sb.root.canonicalize().unwrap_or_else(|_| sb.root.clone());
-        if !resolved.starts_with(&root_canon) {
+        let resolved_str = strip_windows_unc(&resolved.display().to_string());
+        let root_str = strip_windows_unc(&root_canon.display().to_string());
+        if !resolved_str.starts_with(&root_str) {
             return Err(SandboxError::PathEscape {
                 requested: relative.to_string(),
                 root: root_canon.display().to_string(),

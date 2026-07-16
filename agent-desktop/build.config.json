@@ -20,6 +20,13 @@
     "requiredVersion": 22,
     "supportedRange": ">=18 <=22"
   },
+  "windowsMcp": {
+    "version": "1.3.16",
+    "downloadUrlTemplate": "https://github.com/sbroenne/mcp-windows/releases/download/v{version}/windows-mcp-server-{version}-win-x64.zip",
+    "exeName": "windows-mcp-server.exe",
+    "compressedSize": "~51MB",
+    "$comment": "sbroenne/mcp-windows — 语义 UI 自动化（按名称定位控件，非坐标）。Standalone binary，无需 .NET/Python。"
+  },
   "protoc": {
     "hint": "winget install Google.Protobuf",
     "$comment": "protoc 需在 PATH 或通过 .cargo/config.toml 的 [env] PROTOC 指定路径"

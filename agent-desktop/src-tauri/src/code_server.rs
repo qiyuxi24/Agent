@@ -221,6 +221,11 @@ fn find_available_port(start_port: u16, max_attempts: u16) -> Option<u16> {
 }
 
 /// 等待 code-server 真正可访问（HTTP GET 200，绑定回环地址无安全风险）
+///
+/// 健康检查循环中同时检查进程存活状态：
+/// - 如果 code-server 进程已退出（崩溃/异常终止），立即返回 false，避免在死进程上白白轮询到超时
+/// - 区分"连接被拒绝"（端口尚无人监听，启动中的正常现象）和"连接超时"（已监听但无响应）两类错误
+/// - debug 模式下打印所有检查细节，release 模式下静默跳过连接拒绝（避免刷屏）
 async fn wait_for_code_server(port: u16, timeout_secs: u64) -> bool {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(CS_HEALTH_TIMEOUT_SECS))
@@ -234,10 +239,30 @@ async fn wait_for_code_server(port: u16, timeout_secs: u64) -> bool {
     let timeout = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout {
+        // 进程存活检查：如果 code-server 已退出，立即返回失败
+        // 避免在死进程上白白轮询到 CS_BG_READY_TIMEOUT_SECS 超时
+        if !ensure_process_alive().await {
+            eprintln!("[CodeServer] 健康检查终止：code-server 进程已退出");
+            return false;
+        }
+
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => return true,
             Ok(resp) => {
                 eprintln!("[CodeServer] 健康检查 HTTP {}", resp.status());
+            }
+            Err(e) if e.is_connect() => {
+                // 连接被拒绝 → 端口还在等待监听，启动中的正常现象
+                // debug 模式可见，release 模式静默（避免每次启动刷 5~10 行 "失败" 日志）
+                if cfg!(debug_assertions) {
+                    eprintln!("[CodeServer] 等待端口 {} 就绪...", port);
+                }
+            }
+            Err(e) if e.is_timeout() => {
+                eprintln!(
+                    "[CodeServer] 健康检查：端口 {} 连接超时（已监听但无响应）",
+                    port
+                );
             }
             Err(e) => {
                 eprintln!("[CodeServer] 健康检查失败: {}", e);
@@ -566,14 +591,23 @@ pub async fn start_background(app: &AppHandle) {
             );
             eprintln!("[CodeServer] 热备就绪: {}", url);
         } else {
+            let alive = ensure_process_alive().await;
             let tail = read_last_log_lines(&app_handle, CS_LOG_ERROR_LINES);
             let log_path = cs_logs_dir(&app_handle).join("server.log");
-            let msg = format!(
-                "启动超时 ({}s)。\n日志: {}\n最近输出:\n{}",
-                CS_BG_READY_TIMEOUT_SECS,
-                log_path.display(),
-                tail
-            );
+            let msg = if alive {
+                format!(
+                    "启动超时 ({}s)。\n日志: {}\n最近输出:\n{}",
+                    CS_BG_READY_TIMEOUT_SECS,
+                    log_path.display(),
+                    tail
+                )
+            } else {
+                format!(
+                    "进程已退出。\n日志: {}\n最近输出:\n{}",
+                    log_path.display(),
+                    tail
+                )
+            };
             set_last_error(&msg).await;
             eprintln!("[CodeServer] {}", msg);
             let _ = app_handle.emit(
@@ -645,8 +679,13 @@ pub async fn code_server_start(
     // 等待就绪
     let url = format_cs_url(use_port);
     if !wait_for_code_server(use_port, CS_MANUAL_READY_TIMEOUT_SECS).await {
+        let alive = ensure_process_alive().await;
         let logs = read_last_log_lines(&app, CS_LOG_ERROR_LINES);
-        let msg = format!("Code Server 启动超时。\n最近日志:\n{}", logs);
+        let msg = if alive {
+            format!("Code Server 启动超时。\n最近日志:\n{}", logs)
+        } else {
+            format!("Code Server 进程已退出。\n最近日志:\n{}", logs)
+        };
         set_last_error(&msg).await;
         return Err(msg);
     }
@@ -714,24 +753,9 @@ pub async fn code_server_open_ide_window(app: AppHandle) -> Result<(), String> {
         format!("{} — IDE", name)
     };
 
-    // 轻量品牌初始化脚本：确保页面标题一致（product.json 已处理大部分命名）
-    let init_script = r#"
-(function() {
-    // 轮询修正页面标题（VS Code 动态加载后可能覆盖 title）
-    var attempts = 0;
-    var fixTitle = function() {
-        if (document.title && document.title.indexOf('Votek') === -1 && document.title.indexOf('code-server') !== -1) {
-            document.title = document.title.replace(/code-server/gi, 'Votek');
-        }
-        // 也修正可能的 "Code - " 前缀
-        if (document.title && document.title.startsWith('Code - ')) {
-            document.title = document.title.replace('Code - ', '');
-        }
-        if (++attempts < 30) setTimeout(fixTitle, 1000);
-    };
-    setTimeout(fixTitle, 500);
-})();
-"#;
+    // 注入自定义标题栏（decorations:false 后无原生标题栏）
+    // 脚本独立维护在 scripts/ide-titlebar.js，include_str! 编译时嵌入
+    let init_script = include_str!("../scripts/ide-titlebar.js");
 
     let _webview = WebviewWindowBuilder::new(
         &app,
@@ -745,6 +769,8 @@ pub async fn code_server_open_ide_window(app: AppHandle) -> Result<(), String> {
     .visible(true)
     .resizable(true)
     .fullscreen(false)
+    .decorations(false)
+    .transparent(true)
     .initialization_script(init_script)
     .build()
     .map_err(|e| format!("创建 IDE 窗口失败: {}", e))?;
@@ -813,8 +839,13 @@ pub async fn code_server_restart(app: AppHandle) -> Result<CodeServerStatus, Str
 
     // 6. 等待就绪
     if !wait_for_code_server(port, CS_MANUAL_READY_TIMEOUT_SECS).await {
+        let alive = ensure_process_alive().await;
         let logs = read_last_log_lines(&app, CS_LOG_ERROR_LINES);
-        let msg = format!("重启后启动超时。\n最近日志:\n{}", logs);
+        let msg = if alive {
+            format!("重启后启动超时。\n最近日志:\n{}", logs)
+        } else {
+            format!("重启后进程已退出。\n最近日志:\n{}", logs)
+        };
         set_last_error(&msg).await;
         return Err(msg);
     }

@@ -53,7 +53,7 @@ Tauri v2 · React + TypeScript · 纯 CSS（无 Tailwind）· Rust 后端（Agen
 - ✅ V0.1+：Markdown、快捷键、API Key AES-GCM 加密、i18n(zh-CN/en)、取消生成、置顶、侧边栏收起等。
 - ✅ 内置浏览器模块：`src-tauri/src/browser.rs`（WebView2 内核，子 webview + 事件推 URL）。
 - ✅ Skills 市场：`src-tauri/src/skills.rs`（含 GitHub/ClawHub 在线抓取）+ `SkillsPanel.tsx`。
-- ✅ MCP 工具系统：3 个内置 Server（web/tavily/sqlite）+ 在线市场 `mcp_market_list`（npm+GitHub 抓取，5min 缓存）。
+- ✅ MCP 工具系统：4 个内置 Server（web/tavily/sqlite/windows）+ 在线市场 `mcp_market_list`（npm+GitHub 抓取，5min 缓存）。Windows MCP 基于 sbroenne/mcp-windows v1.3.16（独立 .exe，17 个工具：ui_find/ui_click/ui_type/ui_read/screenshot/mouse/keyboard/window_management/app/file_save），配置驱动、二进制可选、平台无感。
 - ✅ Code Server IDE：code-server v4.127.0 随 NSIS 安装包分发（`binaries/code-server/release/`，~212MB→41MB 压缩），独立窗口 + 后台热备，`http://127.0.0.1:port` 免密（**HTTP 非 HTTPS**，未传 --cert 时 code-server 不监听 HTTPS）。**坑 1**：Windows 上 `PathBuf::canonicalize()` 会加 `\\?\` 前缀，Node.js v24 无法识别（EISDIR on 'C:'），必须 strip 掉。**坑 2**：health check/webview URL 必须用 HTTP，否则 code-server 不监听 HTTPS 端口导致持续超时。**坑 3**：code-server 的 @vscode 原生模块（7个: winregistry/windows_process_tree/windows(deviceid)/watchdog/spdlog/vscode-sqlite3/crypt32）在 VS 2026 Insiders 上编译失败（MSB8040：缺 Spectre 缓解库），因为 `*.gyp` 设了 `SpectreMitigation: Spectre`。**已自动化修复**：`scripts/download-code-server.mjs` 的 `stripSpectreMitigation()` 在 `npm install --production` 编译前**递归**扫描 `@vscode/**/*.gyp`（含 sqlite3 的 `deps/sqlite3.gyp`）并删除该设置，改用常规 MSVC 库即可编译。手动兜底：MSBuild 加 `/p:SpectreMitigation=false`，路径 `D:\program files\Microsoft Visual Studio\18\Insiders\MSBuild\Current\Bin\MSBuild.exe`。
 
 ## 构建环境 / 可移植性约定（2026-07-13 排查）

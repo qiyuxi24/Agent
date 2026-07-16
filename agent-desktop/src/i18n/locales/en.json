@@ -24,7 +24,8 @@
     "expandSidebar": "Expand sidebar",
     "browser": "Browser",
     "ide": "IDE",
-    "workspace": "Workspace"
+    "workspace": "Workspace",
+    "agents": "Agents"
   },
 
   "chat": {
@@ -92,7 +93,10 @@
       "empty": "No models yet. Click [Add] above to configure one.",
       "currentModels": "Models:",
       "addModelPlaceholder": "Add model...",
-      "removeModel": "Remove {{model}}"
+      "removeModel": "Remove {{model}}",
+      "exhausted": "Exhausted",
+      "clearExhausted": "Restore all",
+      "restoreModel": "Restore {{model}}"
     },
 
     "shortcuts": {
@@ -250,7 +254,14 @@
       "cleared": "Index cleared",
       "clearConfirm": "Are you sure you want to clear all index data? This cannot be undone.",
       "demoSuccess": "Demo data indexed: {{count}} chunks",
-      "refresh": "Refresh"
+      "refresh": "Refresh",
+      "uploadFile": "Upload File",
+      "uploadFileHint": "Supports PDF, TXT, MD, DOCX. Text extracted automatically.",
+      "dragDrop": "Or drag & drop files here",
+      "uploading": "Parsing and indexing...",
+      "uploadSuccess": "File '{{name}}' indexed ({{chunks}} chunks)",
+      "uploadError": "File upload failed: {{error}}",
+      "supportedFormats": "Supported: PDF, TXT, MD, DOCX"
     }
   },
 
@@ -268,6 +279,52 @@
     "blockedTitle": "Cannot display here",
     "blockedMessage": "This website doesn't allow embedding. Open in your external browser.",
     "searchWith": "Search"
+  },
+
+  "agents": {
+    "title": "Custom Agents",
+    "desc": "Create your own AI agents with custom roles, skills, and tools. Each agent can have its own identity and knowledge.",
+    "create": "Create Agent",
+    "edit": "Edit",
+    "delete": "Delete",
+    "deleteConfirm": "Are you sure you want to delete \"{{name}}\"?",
+    "empty": "No custom agents yet. Create your first one above.",
+    "emptyHint": "Create different agents for different tasks, like a coding assistant, writing assistant, or translator.",
+    "chatWith": "Start Chat",
+    "clone": "Clone",
+
+    "editor": {
+      "title": "Edit Agent",
+      "createTitle": "Create New Agent",
+      "save": "Save",
+      "cancel": "Cancel",
+      "basic": "Basic Info",
+      "name": "Name",
+      "namePlaceholder": "e.g. Code Assistant, Translator",
+      "description": "Description",
+      "descriptionPlaceholder": "Describe what this agent does in one line...",
+      "icon": "Icon",
+      "iconHint": "Pick an emoji as the agent's avatar",
+      "systemPrompt": "System Prompt",
+      "systemPromptPlaceholder": "Define this agent's role and behavior...\n\nExample:\nYou are a senior Python programming assistant, skilled in debugging and architecture design.\nAlways provide code examples when answering.",
+      "systemPromptHint": "The system prompt defines the agent's core behavior. More details = more precise behavior.",
+      "tools": "Tools",
+      "enabledSkills": "Enabled Skills",
+      "skillsDesc": "Select skills to load for this agent. Leave empty to use global defaults.",
+      "enabledMcp": "Enabled MCP Tools",
+      "mcpDesc": "Select MCP servers for this agent. Leave empty to use all connected.",
+      "model": "Model",
+      "modelDesc": "Select the model for this agent. Leave empty to use the global default.",
+      "modelDefault": "Use global default model",
+      "knowledge": "Knowledge Base",
+      "knowledgeDesc": "Link a knowledge base. Leave empty for no knowledge base.",
+      "knowledgeNone": "No knowledge base",
+      "advanced": "Advanced Settings",
+      "temperature": "Temperature",
+      "temperatureHint": "Controls randomness. Lower values (0-0.3) for deterministic, higher (0.7-1.0) for creative.",
+      "maxTokens": "Max Tokens",
+      "maxTokensHint": "Maximum tokens per response."
+    }
   },
 
   "workspace": {

@@ -6,6 +6,57 @@
   height: 100%;
 }
 
+/* ---- Agent 指示栏 ---- */
+.chat-agent-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  margin: 0 16px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.chat-agent-bar-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.chat-agent-bar-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.chat-agent-bar-desc {
+  color: var(--text-muted);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-agent-bar-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.chat-agent-bar-clear:hover {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+
 .chat-empty {
   flex: 1;
   display: flex;

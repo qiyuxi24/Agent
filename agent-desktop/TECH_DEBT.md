@@ -103,3 +103,59 @@
 - **P0 项已全部清零**，当前代码无已知 panic/编译风险。
 - 建议将「每次 `cargo check` + `cargo test` 通过」纳入 pre-commit（项目已有 husky + lint-staged，可扩展）。
 - 剩余债务可按「锁粒度 → 缓存 util → 路径校验」顺序在后续迭代处理，单次 PR 聚焦一类。
+
+---
+
+## 六、架构审查发现（2026-07-15）
+
+> 本次审查聚焦模块边界、文件大小、耦合模式和重复模式，不深入每个文件的实现细节。
+
+### P0 — 文件规模 / 模块拆分（2 项，正在修复）
+
+| # | 文件 | 行数 | 问题 | 修复方案 |
+|---|------|------|------|----------|
+| 16 | `mcp.rs` | 1336 | 单文件承载 4 种职责：类型定义、McpClient 实现、McpManager 管理、市场数据抓取。新增功能无处安放。 | 拆为 `mcp/types.rs` + `client.rs` + `manager.rs` + `market.rs`，原 `mcp.rs` 改为 `mcp/mod.rs` 重导出 |
+| 17 | `lib.rs` | 984 | 类型定义（ChatRequest/ChatMessage/ToolCall/流事件）与业务逻辑（chat_stream/run_completion）与 AppState 混在同一文件，是典型的 God Object。 | 提取 `types.rs`（~180 行）：ChatRequest、ChatMessage、ToolCall、所有 Stream* 事件、ToolCallAcc、msg_to_value、finalize_tool_calls |
+
+### P1 — 重复模式 / 耦合（3 项）
+
+| # | 文件 | 问题 | 建议 |
+|---|------|------|------|
+| 18 | `MarketPanel.tsx` (两种) | Skills 市场和 MCP 市场面板结构高度相似（搜索→列表→安装按钮），各自独立实现。 | 提取通用 `<MarketPanel>` 组件，通过 props/children 差异化内容 |
+| 19 | `appStore.ts` | Zustand store 承载 12+ 种不同领域状态（对话/设置/UI/技能/MCP/RAG/插件/主题等），超过 400 行。 | 按领域拆分为独立 slice（chatSlice/settingsSlice/uiSlice/...），用 `persist` 中间件按需持久化 |
+| 20 | `ide.rs` | IDE 内核（文件操作/代码执行/终端）与 code_server 存在功能边界模糊：部分命令（ide_execute_code）在 ide.rs 实现，但 code_server 内置执行能力。 | 明确边界：ide.rs = 本地轻量操作（文件/目录/搜索）；code_server.rs = VS Code 内核能力（编辑器/诊断/终端）。删除重叠路径。 |
+
+### P2 — 可维护性 / 一致性（3 项）
+
+| # | 问题 | 建议 |
+|---|------|------|
+| 21 | **版本号不一致**：`Cargo.toml` → `0.3.0`，`USER_AGENT` → `0.3.0`，`mcp.rs` MCP 协议中 `"version": "0.3.0"`，`branding.json` → `0.3.0`。四处分散，手动同步易遗漏。 | 从 `Cargo.toml` 读取或从 `branding.json` 单一来源读取版本号 |
+| 22 | **市场数据回退硬编码**：`mcp.rs:builtin_mcp_market()` 和 `skills.rs` 内置数据均硬编码在 Rust 源码中，更新需重新编译。 | 将离线回退数据移入 JSON 资源文件（embed 到二进制或从 app_data 读取） |
+| 23 | **前端测试零覆盖**：Vite 模板默认测试文件被删，项目中无任何前端测试。 | 至少为关键业务逻辑（消息格式化、i18n 切换、API key 加密）添加 Vitest 单元测试 |
+
+## 七、本轮修复（2026-07-16）
+
+| 领域 | 问题 | 修复方式 |
+|------|------|----------|
+| 版本号一致性 | 6 处硬编码版本号（`0.3.0` / `0.3` / `0.1`）互不一致 | 全部改为 `env!("CARGO_PKG_VERSION")` 编译时宏，统一从 `Cargo.toml` 派生；Cargo.toml 同步 `0.3.0` |
+| MCP 锁粒度 | `call_namespaced` 持久 `servers` 锁跨越 `call_tool` 异步 I/O | 改用 `HashMap::remove/insert` 暂移 client，锁仅在查/写 HashMap 时持有，异步调用不锁 |
+| 路径穿越 | `skills_delete/toggle/read_content/install` 的 `id` 参数未校验 | 新增 `validate_skill_id()`，拒绝含 `/`、`\`、`..`、非字母数字的 id |
+| 函数复杂度 | `run_completion` 219 行，SSE 解析与 HTTP 请求耦合 | 提取 `parse_sse_response()`（独立 SSE 解析）+ `detect_quota_error()`（独立检测） |
+| User-Agent 过时 | `skills.rs` 两处过时 UA（`agent-desktop/0.3.0`、`votek/0.1`） | 统一为 `concat!("votek/", env!("CARGO_PKG_VERSION"))` |
+| 窗口权限 | `capabilities/default.json` 缺少 `allow-maximize` 权限 | 添加 `allow-maximize` 和 `allow-unmaximize` |
+
+### 更新已修复列表
+
+以下待处理债务项目已在本轮修复，从待处理清单中移除：
+- ~~锁粒度：`mcp.rs:call_namespaced`~~ → ✅ 已修复
+- ~~硬编码版本号~~ → ✅ 已统一
+- ~~输入校验：skills.rs~~ → ✅ 已添加路径穿越防护
+- ~~`run_completion` 拆分~~ → ✅ SSE 解析已提取为独立函数
+
+### 新发现预存问题（非本轮引入）
+
+| # | 文件 | 问题 | 影响 |
+|---|------|------|------|
+| 24 | `code_server.rs` | Tauri v2.11 API 变更：`webviews()` 返回 `Vec<(String, Webview)>` 非 `Vec<Webview>`；`size()` 方法移除 | `cargo test --lib` 编译失败（`cargo check` 因缓存通过） |
+| 25 | `build.rs` | Tauri v2.11 权限校验：`capabilities/default.json` 中存在若干未注册的权限 | `cargo build` 自定义脚本失败 |
+| 26 | `TODO.md:248` | 前端 `ChatView.tsx` 有两套重复的思考事件处理代码（Tauri Event 监听 + fetch SSE 回调） | 逻辑重复，维护成本高 |

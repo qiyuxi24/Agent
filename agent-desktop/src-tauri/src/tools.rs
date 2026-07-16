@@ -634,7 +634,7 @@ pub fn default_native_tools(
                 // 使用独立的 reqwest client（带超时，不走项目全局的 LazyLock）
                 let client = reqwest::Client::builder()
                     .timeout(std::time::Duration::from_secs(30))
-                    .user_agent("Mozilla/5.0 (compatible; Votek/0.3; +https://github.com/346379/Agent)")
+                    .user_agent(concat!("Mozilla/5.0 (compatible; Votek/", env!("CARGO_PKG_VERSION"), "; +https://github.com/346379/Agent)"))
                     .build()
                     .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
 

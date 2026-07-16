@@ -1,9 +1,19 @@
+/**
+ * 桌宠主组件（Agent 窗口）
+ *
+ * 功能：动画循环、Agent 状态驱动、点击抚摸、窗口控制（关闭、置顶）。
+ * 这是一个独立的 Tauri 窗口（label="pet"），通过 `pet.html` 加载。
+ *
+ * 窗口控制走 Rust `window_*` 命令（通过 useWindowManager 间接调用）。
+ */
+
 import { useEffect, useRef } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { usePetStore } from "./petStore";
 import { drawPet, DEFAULT_ROW_MAP, type SpriteSheet } from "./spriteRenderer";
 import type { PetStats, PetVisualState } from "./types";
+import { useWindowManager } from "../hooks/useWindowManager";
 
 /** 尝试加载 public/pets/default/ 下的真实 Codex 宠物；没有则用程序化宠物 */
 function loadSprite(): Promise<SpriteSheet | null> {
@@ -35,6 +45,9 @@ export default function PetApp() {
   const spriteRef = useRef<SpriteSheet | null>(null);
   const bubble = usePetStore((s) => s.bubble);
   const stats = usePetStore((s) => s.stats);
+
+  // 宠物窗口的窗口管理（关闭/置顶）
+  const { close, toggleAlwaysOnTop, isAlwaysOnTop } = useWindowManager();
 
   // 载入真实精灵图（失败则保持程序化）
   useEffect(() => {
@@ -118,8 +131,35 @@ export default function PetApp() {
     }
   };
 
+  // 关闭按钮：阻止事件冒泡避免触发拖拽
+  const handleClose = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    close();
+  };
+
   return (
     <div className="pet-root" data-tauri-drag-region onClick={handleClick}>
+      {/* 窗口控制按钮（阻止冒泡避免触发 drag） */}
+      <div className="pet-controls">
+        <button
+          className="pet-btn pet-btn-pin"
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleAlwaysOnTop();
+          }}
+          title={isAlwaysOnTop ? "取消置顶" : "置顶"}
+        >
+          {isAlwaysOnTop ? "📌" : "📍"}
+        </button>
+        <button
+          className="pet-btn pet-btn-close"
+          onClick={handleClose}
+          title="关闭宠物"
+        >
+          ✕
+        </button>
+      </div>
+
       <canvas ref={canvasRef} width={220} height={260} className="pet-canvas" />
       {bubble && <div className="pet-bubble">{bubble}</div>}
       <div className="pet-stats">

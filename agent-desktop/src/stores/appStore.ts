@@ -14,7 +14,7 @@ export interface Conversation {
 
 export interface Message {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   timestamp: string;
   /** 深度思考内容（DeepSeek reasoning_content / Claude thinking） */
@@ -33,6 +33,14 @@ export interface Message {
     errorCode?: string | null;
     errorCategory?: string | null;
   }>;
+  /** LLM 返回的工具调用（用于后续轮次上下文保持） */
+  tool_calls?: Array<{
+    id: string;
+    name: string;
+    arguments: string;
+  }>;
+  /** 工具调用结果的 ID 关联（tool 角色消息必填） */
+  tool_call_id?: string;
 }
 
 export type ThemeMode = "system" | "light" | "dark";
@@ -74,6 +82,33 @@ export interface McpServerUI {
   env?: Record<string, string>;
 }
 
+/** 用户自定义 Agent 配置 */
+export interface AgentConfig {
+  id: string;
+  name: string;
+  description: string;
+  /** Agent 头像表情符号（🦊🤖🐻 等），无 emoji 时显示首字母 */
+  icon: string;
+  /** 系统提示词（核心行为定义） */
+  systemPrompt: string;
+  /** 启用的 Skill IDs */
+  enabledSkillIds: string[];
+  /** 启用的 MCP 服务器名称列表 */
+  enabledMcpServerNames: string[];
+  /** 绑定的知识库 ID（RAG） */
+  knowledgeBaseId: string | null;
+  /** 绑定的模型提供商 ID（null=使用全局默认） */
+  providerId: string | null;
+  /** 绑定的模型名（null=使用该提供商的 activeModel） */
+  model: string | null;
+  /** LLM 温度 */
+  temperature: number;
+  /** LLM 最大 Token */
+  maxTokens: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ========== Store 类型 ==========
 
 interface AppState {
@@ -95,10 +130,18 @@ interface AppState {
   mcpServers: McpServerUI[];
   mcpSeeded: boolean;
 
+  // 模型配额耗尽记录（key 为 "providerId::model"，value 为错误信息）
+  quotaExhaustedModels: Record<string, string>;
+
   // 状态
   ready: boolean;
   persistErrorCount: number;
   sidebarCollapsed: boolean;
+
+  // 用户自定义 Agent
+  agentConfigs: AgentConfig[];
+  /** 当前对话绑定的 Agent ID（null=普通模式） */
+  activeAgentId: string | null;
 
   // 工作空间
   workspaceId: string | null;
@@ -109,6 +152,7 @@ interface AppState {
   setActiveConversation: (id: string) => void;
   createConversation: () => string;
   addMessage: (conversationId: string, msg: Message) => void;
+  replaceMessages: (conversationId: string, msgs: Message[]) => void;
   updateLastAssistantMessage: (conversationId: string, content: string) => void;
   updateLastAssistantThinking: (conversationId: string, thinking: string, stats?: { tokens: number; durationMs: number }) => void;
   updateLastAssistantToolSteps: (conversationId: string, toolSteps: Message["toolSteps"]) => void;
@@ -130,6 +174,13 @@ interface AppState {
   removeModel: (providerId: string, model: string) => void;
   setActiveModel: (providerId: string, model: string) => void;
 
+  // 模型配额耗尽管理
+  markModelExhausted: (providerId: string, model: string, errorMsg: string) => void;
+  clearModelExhausted: (providerId: string, model: string) => void;
+  clearAllExhausted: () => void;
+  /** 查找下一个可用的（未耗尽的）模型，优先同 provider 的同系列模型，再跨 provider */
+  findNextAvailableModel: () => { providerId: string; model: string } | null;
+
   // 动作 - MCP 服务器管理
   addMcpServer: (server: McpServerUI) => void;
   removeMcpServer: (name: string) => void;
@@ -139,6 +190,12 @@ interface AppState {
 
   // 侧边栏折叠
   toggleSidebar: () => void;
+
+  // 动作 - Agent 管理
+  addAgentConfig: (config: Omit<AgentConfig, "id" | "createdAt" | "updatedAt">) => string;
+  updateAgentConfig: (id: string, updates: Partial<Omit<AgentConfig, "id" | "createdAt">>) => void;
+  removeAgentConfig: (id: string) => void;
+  setActiveAgent: (agentId: string | null) => void;
 
   // 动作 - 工作空间
   setWorkspace: (id: string, name: string, path: string) => void;
@@ -208,6 +265,16 @@ const DEFAULT_TAVILY_SERVER: McpServerUI = {
   args: ["./mcp-servers/tavily/index.mjs"],
 };
 
+// 内置 Windows MCP Server（Windows 原生 UI 自动化）
+// 基于 sbroenne/mcp-windows，独立的 .exe 二进制（无需 Node.js / Python / .NET）
+// 提供: ui_find/ui_click/ui_type/ui_read/screenshot/mouse/keyboard/window_management
+// 仅在 Windows 上可用；非 Windows 平台连接会失败但不影响应用运行
+const DEFAULT_WINDOWS_MCP_SERVER: McpServerUI = {
+  name: "windows",
+  command: "./binaries/windows-mcp/windows-mcp-server.exe",
+  args: [],
+};
+
 // ========== Store 实现 ==========
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -227,10 +294,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   providers: [],
   activeProviderId: null,
+  quotaExhaustedModels: {},
 
   mcpServers: [],
 
   mcpSeeded: false,
+
+  agentConfigs: [],
+  activeAgentId: null,
 
   ready: false,
   persistErrorCount: 0,
@@ -285,6 +356,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         }));
       }
     }
+    scheduleSave();
+  },
+
+  replaceMessages: (conversationId, msgs) => {
+    set((state) => ({
+      messages: {
+        ...state.messages,
+        [conversationId]: msgs,
+      },
+    }));
     scheduleSave();
   },
 
@@ -460,6 +541,69 @@ export const useAppStore = create<AppState>((set, get) => ({
     scheduleSave();
   },
 
+  // ---- 模型配额耗尽管理 ----
+
+  /** 标记模型为额度已耗尽 */
+  markModelExhausted: (providerId, model, errorMsg) => {
+    const key = `${providerId}::${model}`;
+    set((s) => ({
+      quotaExhaustedModels: { ...s.quotaExhaustedModels, [key]: errorMsg },
+    }));
+    scheduleSave();
+  },
+
+  /** 清除单个模型的耗尽标记（例如用户手动恢复） */
+  clearModelExhausted: (providerId, model) => {
+    const key = `${providerId}::${model}`;
+    set((s) => {
+      const { [key]: _, ...rest } = s.quotaExhaustedModels;
+      return { quotaExhaustedModels: rest };
+    });
+    scheduleSave();
+  },
+
+  /** 清除所有模型的耗尽标记 */
+  clearAllExhausted: () => {
+    set({ quotaExhaustedModels: {} });
+    scheduleSave();
+  },
+
+  /** 查找下一个可用的模型（按优先级）：
+   *  1. 同 provider 的下一个未耗尽的模型
+   *  2. 其他 provider 的第一个未耗尽的模型
+   *  返回 null = 所有模型都已耗尽 */
+  findNextAvailableModel: () => {
+    const state = get();
+    const activeP = state.providers.find((p) => p.id === state.activeProviderId);
+
+    // 先在同 provider 内找下一个模型
+    if (activeP) {
+      const currentIdx = activeP.models.indexOf(activeP.activeModel);
+      for (let i = currentIdx + 1; i < activeP.models.length; i++) {
+        const m = activeP.models[i];
+        if (!state.quotaExhaustedModels[`${activeP.id}::${m}`]) {
+          return { providerId: activeP.id, model: m };
+        }
+      }
+    }
+
+    // 同 provider 没有可用模型 → 跨 provider 找
+    for (const p of state.providers) {
+      if (p.id === state.activeProviderId && activeP) {
+        // 刚才已经搜过同 provider 了，跳过
+        // 但如果没有 activeP（当前没有激活的 provider），第一次循环也要搜
+        continue;
+      }
+      for (const m of p.models) {
+        if (!state.quotaExhaustedModels[`${p.id}::${m}`]) {
+          return { providerId: p.id, model: m };
+        }
+      }
+    }
+
+    return null;
+  },
+
   addMcpServer: (server) => {
     set((s) => {
       const exists = s.mcpServers.some((m) => m.name === server.name);
@@ -487,6 +631,46 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   toggleSidebar: () => {
     set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed }));
+    scheduleSave();
+  },
+
+  // ---- 自定义 Agent 管理 ----
+
+  addAgentConfig: (config) => {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const agent: AgentConfig = {
+      id,
+      ...config,
+      createdAt: now,
+      updatedAt: now,
+    };
+    set((s) => ({ agentConfigs: [...s.agentConfigs, agent] }));
+    scheduleSave();
+    return id;
+  },
+
+  updateAgentConfig: (id, updates) => {
+    set((s) => ({
+      agentConfigs: s.agentConfigs.map((a) =>
+        a.id === id
+          ? { ...a, ...updates, updatedAt: new Date().toISOString() }
+          : a,
+      ),
+    }));
+    scheduleSave();
+  },
+
+  removeAgentConfig: (id) => {
+    set((s) => ({
+      agentConfigs: s.agentConfigs.filter((a) => a.id !== id),
+      activeAgentId: s.activeAgentId === id ? null : s.activeAgentId,
+    }));
+    scheduleSave();
+  },
+
+  setActiveAgent: (agentId) => {
+    set({ activeAgentId: agentId });
     scheduleSave();
   },
 
@@ -527,9 +711,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       const sidebarCollapsed = (await s.get<boolean>("sidebarCollapsed")) || false;
       const mcpServers = (await s.get<McpServerUI[]>("mcpServers")) || [];
       const mcpSeeded = (await s.get<boolean>("mcpSeeded")) || false;
+      const quotaExhaustedModels = (await s.get<Record<string, string>>("quotaExhaustedModels")) || {};
       const workspaceId = (await s.get<string | null>("workspaceId")) || null;
       const workspaceName = (await s.get<string>("workspaceName")) || "";
       const workspacePath = (await s.get<string>("workspacePath")) || "";
+      const agentConfigs = (await s.get<AgentConfig[]>("agentConfigs")) || [];
+      const activeAgentIdFromStore = (await s.get<string | null>("activeAgentId")) || null;
 
       // 迁移旧数据：如果有 apiKey/apiBase/model 但没 providers，自动创建默认 provider
       if (providers.length === 0) {
@@ -551,8 +738,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? conversations
           : [{ id: "default", title: "新对话", createdAt: new Date().toISOString() }];
 
-      // 首次启动时种子内置 Web + Tavily 工具服务器（之后用户删改均持久保留）
-      const seededMcp = mcpSeeded ? mcpServers : [DEFAULT_WEB_SERVER, DEFAULT_TAVILY_SERVER];
+      // 首次启动时种子内置 MCP 服务器（之后用户删改均持久保留）
+      const seededMcp = mcpSeeded
+        ? mcpServers
+        : [DEFAULT_WEB_SERVER, DEFAULT_TAVILY_SERVER, DEFAULT_WINDOWS_MCP_SERVER];
 
       set({
         conversations: finalConversations,
@@ -563,12 +752,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         shortcuts,
         providers,
         activeProviderId,
+        quotaExhaustedModels,
         sidebarCollapsed,
         mcpServers: seededMcp,
         mcpSeeded: true,
         workspaceId,
         workspaceName,
         workspacePath,
+        agentConfigs,
+        activeAgentId: activeAgentIdFromStore,
         ready: true,
       });
 
@@ -607,9 +799,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       await s.set("sidebarCollapsed", state.sidebarCollapsed);
       await s.set("mcpServers", state.mcpServers);
       await s.set("mcpSeeded", state.mcpSeeded);
+      await s.set("quotaExhaustedModels", state.quotaExhaustedModels);
       await s.set("workspaceId", state.workspaceId);
       await s.set("workspaceName", state.workspaceName);
       await s.set("workspacePath", state.workspacePath);
+      await s.set("agentConfigs", state.agentConfigs);
+      await s.set("activeAgentId", state.activeAgentId);
       // 清理旧字段
       await s.delete("apiKey");
       await s.delete("apiBase");
