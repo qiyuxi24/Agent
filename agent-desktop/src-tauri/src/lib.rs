@@ -919,6 +919,7 @@ pub fn run() {
             code_server::code_server_status,
             code_server::code_server_open_ide_window,
             code_server::code_server_read_logs,
+            code_server::code_server_sync_theme,
             // 桌宠
             pet::toggle_pet,
             pet::pet_interact,

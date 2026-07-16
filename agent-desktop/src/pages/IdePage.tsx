@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useAppStore } from "../stores/appStore";
 import { CodeIcon } from "../components/Icons";
 import "../styles/code-server-status.css";
 
@@ -104,25 +105,34 @@ export default function IdePage() {
     };
   }, [clearStartingTimer, setStartingTimer]);
 
-  /// 打开 IDE 窗口
+  /// 获取当前实际主题（解析 system 为实际明暗）
+  const getResolvedTheme = useCallback((): string => {
+    const storeTheme = useAppStore.getState().theme;
+    if (storeTheme === "system") {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    return storeTheme;
+  }, []);
+
+  /// 打开 IDE 窗口（传入当前主题）
   const handleOpen = async () => {
     try {
       setPhase("loading");
-      await invoke("code_server_open_ide_window");
+      await invoke("code_server_open_ide_window", { theme: getResolvedTheme() });
     } catch (e) {
       setError(String(e));
       setPhase("error");
     }
   };
 
-  /// 重启 Code Server
+  /// 重启 Code Server（传入当前主题）
   const handleRestart = async () => {
     try {
       setRestarting(true);
       setError("");
       setLogs("");
       setPhase("loading");
-      const s = await invoke<CodeServerStatus>("code_server_restart");
+      const s = await invoke<CodeServerStatus>("code_server_restart", { theme: getResolvedTheme() });
       setStatus(s);
       setPhase("running");
     } catch (e) {

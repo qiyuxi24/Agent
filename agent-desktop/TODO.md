@@ -1,6 +1,6 @@
 # Votek — 开发路线图 & TODO
 
-> 最后更新：2026-07-14
+> 最后更新：2026-07-16
 
 ---
 
@@ -65,6 +65,58 @@
 - [x] ThinkingBlock 折叠面板 + reasoning_content 解析
 - [x] 前端/后端双端事件（ThinkingStart/Delta/Stop）
 
+### Agent Loop 增强 V2（2026-07-16）
+- [x] **请求参数透传**：`ChatRequest` 新增 7 个字段 → `AgentLoopConfig`
+- [x] **L2 验证循环**：LLM-as-Judge 质量验证（Maker/Checker），默认关闭
+- [x] **单次 LLM 超时保护**：`llm_timeout_secs` via `tokio::time::timeout`
+- [x] **结构化轮次跟踪**：`agent-iteration` / `agent-loop-stats` 事件
+
+### Agent Loop 增强 V1（2026-07-16）
+- [x] **上下文窗口管理**：Token 估算→80% 阈值自动滑动窗口压缩
+- [x] **实时流式思考**：非 reasoning 模型 content 实时推 `thinking-delta`
+- [x] **ToolUseBehavior**：`RunLlmAgain` / `StopOnFirstTool` / `StopAtTools`
+- [x] **HITL 审批流**：`tool-approval-required` 事件 + `tool_approval_response` 命令
+- [x] **Token 追踪**：每轮 emit `token-usage` 事件
+- [x] **工具结果富化**：>5K 字符摘要 / JSON 结构化压缩
+
+### 自定义 Agent 创建（2026-07-16）
+- [x] 表单驱动的 Agent 编辑器（名称/表情符号/系统提示词/模型/温度/最大Token）
+- [x] Agent 列表页（卡片网格 + 创建/编辑/删除/克隆/开始对话）
+- [x] ChatView 集成（自动注入 system prompt + 切换模型 + 顶部指示栏）
+- [x] 完全前端驱动，数据持久化到 store.json
+
+### 模型自动切换 & Quota 耗尽跟踪（2026-07-16）
+- [x] 后端检测 429/402/配额关键词 → emit `model-quota-exhausted` 事件
+- [x] 前端重试循环自动切换到下一个可用模型
+- [x] 设置页显示耗尽角标（红色），支持单模型/全部恢复
+
+### 自定义 TitleBar（2026-07-16）
+- [x] 主窗口 `decorations: false` + `transparent: true` 移除原生标题栏
+- [x] TitleBar 组件（可拖拽 + 最小化/最大化/关闭）
+- [x] 关闭按钮 hover 变红色 `var(--danger)`
+
+### IDE 嵌入主窗口（2026-07-16）
+- [x] code-server 嵌入主窗口内容区（Tauri v2 unstable add_child 子 WebView）
+- [x] Rust 命令：embed_ide / resize_ide / close_ide
+- [x] 侧边栏折叠 / 窗口缩放时 ResizeObserver 实时调整子 WebView
+- [x] 离开 IDE 页面自动销毁子 WebView
+
+### IDE 持久化 & 主题同步（2026-07-16）
+- [x] 三段 fallback 持久化路径（app_data_dir → dirs_next → CWD）
+- [x] `cs_extensions_dir` — 扩展与环境数据分离
+- [x] `save_last_workspace` / `read_last_workspace` — 上次工作区记忆
+- [x] `write_color_theme` — 自动写 VS Code 主题设置
+- [x] `code_server_sync_theme` 命令 — 写设置 + 重载 IDE 窗口
+- [x] 前端 App.tsx 订阅 theme 变化自动同步到 IDE
+
+### 技术债务修复（2026-07-16）
+- [x] 版本号统一（6 处 → `env!("CARGO_PKG_VERSION")`）
+- [x] MCP 锁粒度优化（remove/insert 模式）
+- [x] 路径穿越防护（validate_skill_id）
+- [x] `run_completion` 拆分（parse_sse_response / detect_quota_error）
+- [x] 编译 warning 清零（dead_code / 注册遗漏 / 测试修复 / sandbox UNC）
+- [x] 窗口权限添加（allow-maximize / allow-unmaximize）
+
 ### 基础设施
 - [x] Tauri v2 + React + TypeScript + Rust
 - [x] SQLite 持久化（对话 + 设置）
@@ -83,33 +135,14 @@
 
 ## 近期 TODO（P0）
 
-### Agent Loop 增强（2026-07-16 后端新增）
-
-> 后端已完成以下增强，以下为前端消费任务：
-
-#### 后端新增 ✅
-- [x] **请求参数透传**：`ChatRequest` 新增 `tool_use_behavior` / `stop_at_tool_names` / `require_tool_approval_for` / `max_iterations` / `enrichment_threshold_chars` / `llm_timeout_secs`，从 Agent 配置透传到 `AgentLoopConfig`
-- [x] **单次 LLM 超时保护**：`AgentLoopConfig.llm_timeout_secs`（0=使用底层 120s 读取超时），通过 `tokio::time::timeout` 包装
-- [x] **L2 验证循环**：`verify_output()` — LLM-as-Judge 质量验证（Maker/Checker 分离原则），`AgentLoopConfig.enable_verification` 控制
-- [x] **结构化轮次跟踪**：`agent-iteration` 事件（`AgentIterationEvent`：iteration/total/phase/elapsed_ms），`agent-loop-stats` 事件（`AgentLoopStats`：总轮次/耗时/工具调用数/压缩次数/是否验证）
-- [x] 新增 3 个事件类型：`AgentIterationEvent`、`AgentLoopStats`、`agent-iteration-tick`（向后兼容旧格式）
-
-#### 前端待消费
-- [ ] **实时思考流式（ThinkingPanel）**：验证 `thinking-delta` 在非 reasoning 模型上的表现。后端现在将 agent 模式中间轮的 content 实时推为 `thinking-delta`，ThinkingPanel 应能正常增量显示（无需 thinking-start 重复触发）。如果面板闪烁/空白，需检查 `ThinkingPanel.tsx` 是否对无 thinking-start 的 thinking-delta 有兜底处理。
-- [ ] **上下文压缩通知**：监听 `context-compacted` 事件，在聊天区域底部或通知栏显示一条轻提示（如"上下文已优化，节省 X tokens"），2-3s 自动消失。参考 `StreamNotify` 组件用法。
-- [ ] **Token 用量面板**：监听 `token-usage` 事件，在聊天输入框附近或 footer 栏显示当前轮次的 input/output/total token 数。可选：仅 agent 模式显示；hover 展开详情。
-- [ ] **工具审批弹窗（HITL）**：
-  1. 监听 `tool-approval-required` 事件 → 弹出模态确认框，显示工具名、参数 JSON（格式化），以及"批准"/"拒绝"按钮 + 可选反馈输入框
-  2. 用户点击后调 `tool_approval_response` Tauri command 写入审批决策
-  3. 后端侧默认无需审批任何工具，通过设置页 `require_tool_approval_for` 数组配置敏感工具名（如 `native_write_file`、`native_terminal_exec`）
-- [ ] **审批设置 UI**：在设置页 Agent 配置区域新增"敏感工具审批"输入框（逗号分隔工具名），调用后端 config 同步。当前后端 `require_tool_approval_for` 默认为空数组。
-- [ ] **Agent Loop 统计展示**：监听 `agent-loop-stats` 事件，在最终答案末尾显示一个轻量总结（轮次/耗时/工具调用数）
-- [ ] **轮次进度指示**：监听 `agent-iteration` 事件，在思考面板或输入框上方显示当前轮次进度（如"第 3/10 轮·思考中"）
-
-#### 后续后端增强（低优先级）
-- [ ] Verification Loop 通过 `ChatRequest` 控制而非硬编码 `false`
-- [ ] `agent-iteration` 前端进度条对接
-- [ ] L2 验证结果前端展示（"回答已通过质量验证" 标记）
+### Agent Loop 前端消费任务（后端已完成，等待前端对接）
+- [ ] **实时思考流式（ThinkingPanel）**：验证 `thinking-delta` 在非 reasoning 模型上的表现。后端现在将 agent 模式中间轮的 content 实时推为 `thinking-delta`，ThinkingPanel 应能正常增量显示。检查面板是否对无 thinking-start 的 thinking-delta 有兜底处理。
+- [ ] **上下文压缩通知**：监听 `context-compacted` 事件，显示轻提示（如"上下文已优化，节省 X tokens"），2-3s 自动消失。
+- [ ] **Token 用量面板**：监听 `token-usage` 事件，显示 input/output/total token。可选：仅 agent 模式 + hover 展开详情。
+- [ ] **工具审批弹窗（HITL）**：监听 `tool-approval-required` 事件 → 模态确认框 → 用户调 `tool_approval_response` 命令
+- [ ] **审批设置 UI**：设置页 Agent 区域添加"敏感工具审批"输入框（逗号分隔工具名）
+- [ ] **Agent Loop 统计展示**：监听 `agent-loop-stats` 事件，最终答案末尾显示总结
+- [ ] **轮次进度指示**：监听 `agent-iteration` 事件，显示"第 3/10 轮·思考中"
 
 ### 子进程管理 — Layer 3（后续）
 
@@ -134,17 +167,21 @@
 - [ ] 更多内置 MCP Server（playwright、filesystem 增强版）
 
 ### IDE 遗留项
-- [ ] 插件/设置持久化（重启不丢失已装扩展和配置）
-- [ ] 主题与 Votek 自动同步（dark/light）
+- [x] 插件/设置持久化（重启不丢失已装扩展和配置）
+- [x] 主题与 Votek 自动同步（dark/light）
 - [ ] 扩展市场默认配置（预装推荐插件列表）
 - [ ] 系统原生目录选择对话框（接入 tauri-plugin-dialog）
 - [ ] Agent ↔ IDE 联动协议（Agent 打开文件/跳转行号/运行命令）
 - [ ] IDE 内选中代码 → 发给指定 Agent 处理
 
 ### 知识库 RAG（V0.3）
-- [x] 文档导入（PDF/Word/TXT/Markdown）— 通过 RagPanel 上传
+- [x] 文档导入（PDF/Word/TXT/Markdown）— RagPanel 上传 + 拖拽区
 - [x] 向量嵌入（本地 embedding 模型）— fastembed + BGE 中文模型
 - [x] 向量检索 + LLM 问答 — LanceDB + text-splitter 语义分块
+- [x] 纯 Rust 格式解析（rag_parser.rs）：PDF（pdf-extract）、DOCX（zip+XML 手写解析）
+- [x] 对话自动索引（chat_stream 完成后异步索引 Q&A 对）
+- [x] 文档去重（indexed_docs 追踪）
+- [x] tauri-plugin-dialog 文件选择器
 - [ ] 文件变更自动增量索引
 - [ ] 支持更多文档格式（图片 OCR、HTML、EPUB）
 
@@ -209,12 +246,12 @@ Agent 集群管理器
 - [x] **Step 3**：code-server 完整 VS Code IDE 内核
   - 自动下载安装（GitHub Releases，~100MB）
   - Tauri Rust 后端管理进程生命周期（start/stop/status）
-  - 🔥 独立 Tauri 窗口（不再 iframe 嵌入 — 点击 IDE 打开新窗口，完整 VS Code 体验）
+  - 🔥 独立 Tauri 窗口 → 后改为**嵌入主窗口内容区**（Tauri v2 unstable add_child）
   - 支持完整 VS Code 插件生态（.vsix）
   - `--auth none` 本地免密模式
   - 🔥 **应用启动时后台热备**：setup() 阶段 spawn code-server，轮询端口就绪后发 `ide-ready` 事件
-  - 🔥 **独立窗口**：`code_server_open_ide_window` 创建新 Tauri WebviewWindow，直接加载 `https://localhost:8443`
-  - IdePage 降级为状态页（显示"VS Code 已在独立窗口中运行" + 打开/重试按钮）
+  - 🔥 **嵌入模式**：`code_server_embed_ide` 在主窗口叠加子 WebView 加载 code-server
+  - IdePage 降级为状态页（纯状态提示）
 - [ ] **Step 4**：IDE 作为 Agent 集群工具
   - [ ] Agent ↔ IDE 联动协议：Agent 打开文件/跳转行号/运行命令
   - [ ] IDE 内选中代码 → 发给指定 Agent 处理
@@ -222,9 +259,9 @@ Agent 集群管理器
   - [ ] IDE 服务发现：Agent 自动发现当前可用的 IDE 实例
 - [x] **Step 5**：VS Code 体验对齐
   - [x] 启动速度优化（code-server 常驻后台，秒开）
-  - [x] 全屏原生窗口（独立 Tauri 窗口，无任何遮挡）
-  - [ ] 插件/设置持久化（重启不丢失已装扩展和配置）
-  - [ ] 主题与 Votek 自动同步（dark/light）
+  - [x] 全屏原生窗口/A->嵌入主窗口
+  - [x] 插件/设置持久化（重启不丢失已装扩展和配置）
+  - [x] 主题与 Votek 自动同步（dark/light）
   - [x] 快捷键透传（独立窗口 = 完整 VS Code 体验，所有快捷键正常使用）
   - [ ] 扩展市场默认配置（预装推荐插件列表）
 - [x] **Step 6**：插件生态

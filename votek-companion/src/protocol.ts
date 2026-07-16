@@ -146,6 +146,43 @@ export interface StatusResult {
   uptime: number;  // seconds
 }
 
+// ── Method: sendToTerminal ──
+
+export interface SendToTerminalParams {
+  text: string;
+  terminalName?: string;
+  newTerminal?: boolean;
+}
+
+export interface SendToTerminalResult {
+  name: string;
+}
+
+// ── Method: searchInWorkspace ──
+
+export interface SearchInWorkspaceParams {
+  query: string;
+  include?: string;
+  maxResults?: number;
+}
+
+export interface SearchResultItem {
+  file: string;
+  line: number;
+  column: number;
+  preview: string;
+}
+
+// ── Method: getFileDiff ──
+
+export interface GetFileDiffParams {
+  filePath: string;
+}
+
+export interface GetFileDiffResult {
+  diff: string;
+}
+
 // ── Method registry ──
 
 export const METHODS = [
@@ -159,6 +196,9 @@ export const METHODS = [
   "executeCommand",
   "getWorkspaceInfo",
   "getFileSymbols",
+  "sendToTerminal",
+  "searchInWorkspace",
+  "getFileDiff",
 ] as const;
 
 export type MethodName = (typeof METHODS)[number];

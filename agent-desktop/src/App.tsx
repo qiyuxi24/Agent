@@ -14,7 +14,7 @@ const BrowserPanel = lazy(() => import("./pages/BrowserPanel"));
 const IdePage = lazy(() => import("./pages/IdePage"));
 const WorkspacePage = lazy(() => import("./pages/WorkspacePage"));
 
-type Page = "chat" | "settings" | "browser" | "ide" | "workspace";
+type Page = "chat" | "settings" | "browser" | "ide" | "workspace" | "agents";
 
 function App() {
   const { t } = useTranslation();
@@ -24,7 +24,7 @@ function App() {
 
   // Store
   const {
-    activeConversationId, ready,
+    activeConversationId, ready, theme,
     sidebarCollapsed,
     loadFromStore, createConversation, toggleSidebar,
   } = useAppStore();
@@ -94,12 +94,39 @@ function App() {
     return () => mq.removeEventListener("change", handleChange);
   }, []);
 
+  // IDE 主题同步：Votek 主题变化时自动同步到 code-server
+  useEffect(() => {
+    if (!ready) return;
+    const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+    if (!isTauri) return;
+    const actual = theme === "system"
+      ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+      : theme;
+    (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("code_server_sync_theme", { theme: actual });
+      } catch (e) {
+        // IDE 未运行或命令不可用时静默失败
+        console.debug("[ThemeSync] sync 失败（IDE 可能未运行）:", e);
+      }
+    })();
+  }, [theme, ready]);
+
+  /// 解析当前实际主题（dark/light），用于打开 IDE 窗口时传入
+  function getResolvedTheme(): string {
+    if (theme === "system") {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    return theme;
+  }
+
   // IDE 启动：打开独立 Tauri 窗口
   const handleNavigate = async (p: Page) => {
     if (p === "ide") {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("code_server_open_ide_window");
+        await invoke("code_server_open_ide_window", { theme: getResolvedTheme() });
       } catch (e) {
         console.error("打开 IDE 窗口失败:", e);
         // 降级：在主页面内显示 IdePage

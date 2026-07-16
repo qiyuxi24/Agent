@@ -459,6 +459,79 @@ impl VscodeBridge {
         Ok(format!("{} 的符号:\n{}", file_path, lines.join("\n")))
     }
 
+    // ── 新增工具方法 ─────────────────────────────────
+
+    /// 向 VS Code 终端发送命令
+    pub async fn send_to_terminal(
+        &self,
+        text: &str,
+        terminal_name: Option<&str>,
+        new_terminal: bool,
+    ) -> Result<String, String> {
+        let params = json!({
+            "text": text,
+            "terminalName": terminal_name,
+            "newTerminal": new_terminal,
+        });
+        let result = self.call("sendToTerminal", params).await?;
+        let name = result["name"].as_str().unwrap_or("terminal");
+        Ok(format!("已发送到终端 [{}]", name))
+    }
+
+    /// 在工作区文件中搜索文本
+    pub async fn search_in_workspace(
+        &self,
+        query: &str,
+        include_pattern: Option<&str>,
+        max_results: Option<u32>,
+    ) -> Result<String, String> {
+        let mut params = json!({ "query": query });
+        if let Some(p) = include_pattern {
+            params["include"] = json!(p);
+        }
+        if let Some(m) = max_results {
+            params["maxResults"] = json!(m);
+        }
+        let result = self.call("searchInWorkspace", params).await?;
+        let results: Vec<Value> = serde_json::from_value(result)
+            .map_err(|e| format!("解析搜索结果失败: {}", e))?;
+
+        if results.is_empty() {
+            return Ok(format!("在项目中未找到 \"{}\" 的匹配项", query));
+        }
+
+        let lines: Vec<String> = results
+            .iter()
+            .map(|r| {
+                let file = r["file"].as_str().unwrap_or("");
+                let line = r["line"].as_u64().unwrap_or(0);
+                let col = r["column"].as_u64().unwrap_or(0);
+                let preview = r["preview"].as_str().unwrap_or("");
+                format!("{}:{}:{}  {}", file, line, col, preview.trim())
+            })
+            .collect();
+
+        Ok(format!("在 {} 个文件中找到 \"{}\":\n{}", results.len(), query, lines.join("\n")))
+    }
+
+    /// 获取文件的 Git 差异
+    pub async fn get_file_diff(&self, file_path: &str) -> Result<String, String> {
+        let result = self
+            .call("getFileDiff", json!({ "filePath": file_path }))
+            .await?;
+
+        if result.is_null() {
+            return Ok(format!("文件无未暂存的更改: {}", file_path));
+        }
+
+        let diff = result["diff"].as_str().unwrap_or("");
+        if diff.is_empty() {
+            return Ok(format!("文件无更改: {}", file_path));
+        }
+
+        Ok(format!("文件差异 {}:\n{}", file_path, diff))
+    }
+
     // ── 工具注册 ──
 
     /// 将所有 VSCode 工具注册到 ToolRegistry
@@ -721,6 +794,113 @@ impl VscodeBridge {
                         let fp = v["filePath"].as_str()
                             .ok_or_else(|| "缺少 filePath 参数".to_string())?;
                         b.get_file_symbols(fp).await
+                    })
+                }),
+            );
+        }
+
+        // 10. vscode_send_to_terminal — 向 VS Code 终端发送命令
+        {
+            let b = Arc::clone(&bridge);
+            registry.register_native(
+                "vscode_send_to_terminal",
+                "向 VS Code 集成终端发送命令。可以发送到现有终端或创建新终端。例如编译命令、运行测试等。",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "要发送到终端的命令文本"
+                        },
+                        "terminalName": {
+                            "type": "string",
+                            "description": "可选：终端名称。不传则发送到活动终端。"
+                        },
+                        "newTerminal": {
+                            "type": "boolean",
+                            "description": "是否创建新终端（默认 false）"
+                        }
+                    },
+                    "required": ["text"]
+                }),
+                Arc::new(move |args: String| {
+                    let b = Arc::clone(&b);
+                    Box::pin(async move {
+                        let v: Value = serde_json::from_str(&args)
+                            .map_err(|e| format!("参数解析失败: {}", e))?;
+                        let text = v["text"].as_str()
+                            .ok_or_else(|| "缺少 text 参数".to_string())?;
+                        let name = v["terminalName"].as_str();
+                        let new_term = v["newTerminal"].as_bool().unwrap_or(false);
+                        b.send_to_terminal(text, name, new_term).await
+                    })
+                }),
+            );
+        }
+
+        // 11. vscode_search_in_workspace — 在工作区文件中搜索文本
+        {
+            let b = Arc::clone(&bridge);
+            registry.register_native(
+                "vscode_search_in_workspace",
+                "在 VS Code 工作区所有文件中搜索指定文本。支持 include glob 模式过滤文件类型。返回匹配的文件路径、行号、列号和预览片段。",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "要搜索的文本"
+                        },
+                        "include": {
+                            "type": "string",
+                            "description": "可选：文件包含模式（glob），例如 '*.rs' 只搜索 Rust 文件"
+                        },
+                        "maxResults": {
+                            "type": "integer",
+                            "description": "可选：最大结果数（默认 50）"
+                        }
+                    },
+                    "required": ["query"]
+                }),
+                Arc::new(move |args: String| {
+                    let b = Arc::clone(&b);
+                    Box::pin(async move {
+                        let v: Value = serde_json::from_str(&args)
+                            .map_err(|e| format!("参数解析失败: {}", e))?;
+                        let query = v["query"].as_str()
+                            .ok_or_else(|| "缺少 query 参数".to_string())?;
+                        let include = v["include"].as_str();
+                        let max_results = v["maxResults"].as_u64().map(|n| n as u32);
+                        b.search_in_workspace(query, include, max_results).await
+                    })
+                }),
+            );
+        }
+
+        // 12. vscode_get_file_diff — 获取文件的 Git 差异
+        {
+            let b = Arc::clone(&bridge);
+            registry.register_native(
+                "vscode_get_file_diff",
+                "获取指定文件的 Git 差异（未暂存的更改）。返回标准 diff 格式，显示添加/删除/修改的行。需要 Git 仓库和 VS Code Git 扩展支持。",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "filePath": {
+                            "type": "string",
+                            "description": "文件的绝对路径"
+                        }
+                    },
+                    "required": ["filePath"]
+                }),
+                Arc::new(move |args: String| {
+                    let b = Arc::clone(&b);
+                    Box::pin(async move {
+                        let v: Value = serde_json::from_str(&args)
+                            .map_err(|e| format!("参数解析失败: {}", e))?;
+                        let fp = v["filePath"].as_str()
+                            .ok_or_else(|| "缺少 filePath 参数".to_string())?;
+                        b.get_file_diff(fp).await
                     })
                 }),
             );

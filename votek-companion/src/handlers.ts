@@ -23,6 +23,12 @@ import type {
   ExecuteCommandResult,
   GetFileSymbolsParams,
   StatusResult,
+  SendToTerminalParams,
+  SendToTerminalResult,
+  SearchInWorkspaceParams,
+  SearchResultItem,
+  GetFileDiffParams,
+  GetFileDiffResult,
 } from "./protocol";
 
 // ── Result wrapper ──
@@ -47,6 +53,9 @@ export async function handleMethod(method: string, params: Record<string, unknow
       case "executeCommand":       return { result: await handleExecuteCommand(params as unknown as ExecuteCommandParams) };
       case "getWorkspaceInfo":     return { result: await handleGetWorkspaceInfo() };
       case "getFileSymbols":       return { result: await handleGetFileSymbols(params as unknown as GetFileSymbolsParams) };
+      case "sendToTerminal":       return { result: await handleSendToTerminal(params as unknown as SendToTerminalParams) };
+      case "searchInWorkspace":    return { result: await handleSearchInWorkspace(params as unknown as SearchInWorkspaceParams) };
+      case "getFileDiff":          return { result: await handleGetFileDiff(params as unknown as GetFileDiffParams) };
       default:
         return { error: { code: -32601, message: `Unknown method: ${method}` } };
     }
@@ -314,6 +323,118 @@ async function handleGetFileSymbols(params: GetFileSymbolsParams): Promise<Symbo
     column: s.location.range.start.character + 1,
     containerName: s.containerName || undefined,
   }));
+}
+
+// ── sendToTerminal ──
+
+async function handleSendToTerminal(params: SendToTerminalParams): Promise<SendToTerminalResult> {
+  let term: vscode.Terminal;
+
+  if (params.newTerminal || !params.terminalName) {
+    // 创建新终端
+    term = vscode.window.createTerminal(params.terminalName || "Votek Agent");
+  } else {
+    // 查找现有终端
+    term = vscode.window.terminals.find((t) => t.name === params.terminalName)
+      || vscode.window.createTerminal(params.terminalName);
+  }
+
+  term.show();
+  term.sendText(params.text, true); // true = 自动追加换行执行
+
+  return { name: term.name };
+}
+
+// ── searchInWorkspace ──
+
+async function handleSearchInWorkspace(params: SearchInWorkspaceParams): Promise<SearchResultItem[]> {
+  const results: SearchResultItem[] = [];
+  const max = params.maxResults || 50;
+
+  const includePattern = params.include ? `**/${params.include}` : "**/*";
+
+  await vscode.workspace.findTextInFiles(
+    { pattern: params.query },
+    { include: new vscode.RelativePattern(vscode.workspace.workspaceFolders?.[0] || "", includePattern),
+      maxResults: max },
+    (item) => {
+      for (const match of item.ranges.matches) {
+        if (results.length >= max) return;
+        const range = match as vscode.Range;
+        const line = item.uri.fsPath;
+        const lineText = item.textDocument.lineAt(range.start.line).text;
+        results.push({
+          file: line,
+          line: range.start.line + 1,
+          column: range.start.character + 1,
+          preview: lineText.trim(),
+        });
+      }
+    }
+  );
+
+  return results;
+}
+
+// ── getFileDiff ──
+
+async function handleGetFileDiff(params: GetFileDiffParams): Promise<GetFileDiffResult | null> {
+  try {
+    const uri = vscode.Uri.file(params.filePath);
+
+    // 使用 VS Code 的 Git 扩展获取差异
+    // 先尝试获取原始文件内容（HEAD 版本）
+    const headUri = uri.with({ scheme: "git", path: `HEAD:${params.filePath}` });
+
+    let headContent: string | null = null;
+    try {
+      const headDoc = await vscode.workspace.openTextDocument(headUri);
+      headContent = headDoc.getText();
+    } catch {
+      // 文件可能不在 git 历史中（新文件）
+    }
+
+    if (headContent === null) {
+      return null;
+    }
+
+    const currentDoc = await vscode.workspace.openTextDocument(uri);
+    const currentContent = currentDoc.getText();
+
+    if (headContent === currentContent) {
+      return { diff: "" }; // 无差异
+    }
+
+    // 生成简易 diff（行级别对比）
+    const headLines = headContent.split("\n");
+    const currentLines = currentContent.split("\n");
+    const diffLines: string[] = [];
+    const maxLen = Math.max(headLines.length, currentLines.length);
+
+    for (let i = 0; i < maxLen; i++) {
+      const h = headLines[i] ?? "";
+      const c = currentLines[i] ?? "";
+
+      if (h === c) {
+        diffLines.push(` ${h}`);
+      } else if (c === "") {
+        // 删除行
+        diffLines.push(`-${h}`);
+      } else if (h === "" || h === undefined) {
+        // 新增行
+        diffLines.push(`+${c}`);
+      } else {
+        diffLines.push(`-${h}`);
+        diffLines.push(`+${c}`);
+      }
+    }
+
+    return { diff: diffLines.join("\n") };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[votek-companion] getFileDiff error:`, msg);
+    return null;
+  }
 }
 
 // ── Helpers ──
